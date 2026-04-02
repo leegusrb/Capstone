@@ -1,0 +1,15 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: capstone_db
+    environment:
+      POSTGRES_USER: capstone
+      POSTGRES_PASSWORD: capstone1234
+      POSTGRES_DB: capstone_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

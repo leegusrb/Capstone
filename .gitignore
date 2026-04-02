@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 환경변수
+.env
+
+# 업로드 파일
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# DB
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+dist/
+frontend/.env
