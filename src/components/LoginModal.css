@@ -1,0 +1,106 @@
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 999;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal-card {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 8px 40px rgba(15,23,42,0.18);
+  padding: 44px 40px 36px;
+  width: 100%; max-width: 380px;
+  position: relative;
+  animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.modal-close {
+  position: absolute; top: 16px; right: 18px;
+  background: none; border: none;
+  font-size: 16px; color: #94a3b8;
+  cursor: pointer; line-height: 1;
+  padding: 4px 6px; border-radius: 6px;
+}
+.modal-close:hover { background: #f1f5f9; color: #0f172a; }
+
+.modal-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.modal-logo {
+  display: flex; justify-content: center;
+  margin-bottom: 12px;
+}
+.modal-title {
+  font-size: 22px; font-weight: 800; color: #0f172a;
+  margin: 0 0 6px;
+}
+.modal-sub {
+  font-size: 13px; color: #94a3b8; margin: 0;
+}
+
+.modal-form {
+  display: flex; flex-direction: column; gap: 16px;
+  margin-bottom: 20px;
+}
+
+.field-group {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.field-label {
+  font-size: 13px; font-weight: 600; color: #374151;
+}
+.field-input {
+  padding: 11px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 14px; color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field-input:focus {
+  border-color: #4f6ef7;
+  box-shadow: 0 0 0 3px rgba(79,110,247,0.10);
+}
+
+.modal-error {
+  font-size: 13px; color: #ef4444;
+  margin: 0; text-align: center;
+}
+
+.modal-btn {
+  width: 100%;
+  padding: 13px;
+  background: #4f6ef7;
+  color: #fff;
+  font-size: 15px; font-weight: 700;
+  border: none; border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-top: 4px;
+}
+.modal-btn:hover { background: #3a57d4; }
+
+.modal-footer {
+  text-align: center;
+  font-size: 13px; color: #94a3b8;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.modal-register-link {
+  background: none; border: none;
+  color: #4f6ef7; font-weight: 600; font-size: 13px;
+  cursor: pointer; padding: 0;
+}
+.modal-register-link:hover { text-decoration: underline; }
