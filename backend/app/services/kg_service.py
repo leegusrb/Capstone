@@ -89,14 +89,32 @@ _EXTRACTION_PROMPT = """\
 
 아래 학습 자료 텍스트를 분석해서 지식 그래프 형태로 정리해주세요.
 
-규칙:
-1. nodes: 핵심 개념 5~20개를 추출합니다.
-2. edges: 두 개념 사이의 관계를 추출합니다. relation에는 짧은 동사구를 사용합니다.
-   예시: "포함한다", "의존한다", "구성요소이다", "연결 방식은", "특성은"
-3. 너무 세분화되거나 너무 추상적인 개념은 제외합니다.
-4. 반드시 아래 JSON 형식만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.
+━━━ 노드 추출 규칙 ━━━
+1. [단일 개념 원칙] 하나의 노드는 반드시 하나의 단일 개념 또는 용어만 나타냅니다.
+   - 복합 개념(예: "흐름 제어와 혼잡 제어")은 반드시 별도 노드로 분리하세요.
+   - 잘못된 예: 노드 = "흐름 제어와 혼잡 제어"
+   - 올바른 예: 노드 = "흐름 제어", 노드 = "혼잡 제어"
 
-반환 형식:
+2. [하위 메커니즘 분리] 특정 개념의 구현 방식·구성 요소·하위 메커니즘이
+   독립적으로 설명 가능한 경우 별도 노드로 추출합니다.
+   - 예: "흐름 제어" → 하위에 "슬라이딩 윈도우", "버퍼"를 별도 노드로 분리
+
+3. [과도한 세분화 금지] 자료에서 핵심 역할을 하지 않는 지나치게 세부적인 용어는
+   상위 개념 노드에 포함합니다. 전체 노드 수는 5~20개를 목표로 합니다.
+
+━━━ 엣지 추출 규칙 ━━━
+4. [구체적 동사구 사용] relation에는 두 개념의 관계를 명확히 표현하는 동사구를 사용합니다.
+   허용 예시: "포함한다", "사용한다", "구성요소이다", "전제한다",
+              "연결을 수립한다", "특성을 가진다", "구현 방식으로 사용한다"
+
+5. [추상적 관계 금지] "관련있다", "연관된다" 등 모호한 표현은 relation으로 사용하지 않습니다.
+   반드시 두 개념 사이의 구체적 관계를 표현하는 동사구로 대체하세요.
+
+6. [방향성 명시] 모든 엣지는 source → target 방향을 명확히 지정합니다.
+
+━━━ 출력 형식 ━━━
+반드시 아래 JSON 형식만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.
+
 {
   "nodes": ["개념1", "개념2"],
   "edges": [
@@ -154,10 +172,24 @@ def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx
     for node_id in data.get("nodes", []):
         graph.add_node(str(node_id), status="reference")
 
+    # 추상적 relation으로 간주할 표현 목록 (품질 검증용)
+    _ABSTRACT_RELATIONS = {"관련", "관련있다", "연관된다", "연관", "관계있다"}
+
+    abstract_edges_found = []
+
     for edge in data.get("edges", []):
         src = str(edge["source"])
         tgt = str(edge["target"])
         rel = str(edge.get("relation", "관련"))
+
+        # 추상적 relation 경고 로그 — 프롬프트 규칙 위반 감지
+        if rel in _ABSTRACT_RELATIONS:
+            logger.warning(
+                "추상적 relation 감지 (프롬프트 규칙 위반): '%s' -[%s]-> '%s'. "
+                "프롬프트를 점검하거나 해당 엣지를 수동으로 검토하세요.",
+                src, rel, tgt,
+            )
+            abstract_edges_found.append((src, rel, tgt))
 
         if src not in graph:
             graph.add_node(src, status="reference")
@@ -171,6 +203,17 @@ def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx
         graph.number_of_nodes(),
         graph.number_of_edges(),
     )
+
+    # KG 품질 요약 로그 (팀 교차 검토용)
+    if abstract_edges_found:
+        logger.warning(
+            "추상적 relation 엣지 %d개 발견. 수동 검토 권장: %s",
+            len(abstract_edges_found),
+            abstract_edges_found,
+        )
+    else:
+        logger.info("KG 품질 검증 통과 — 추상적 relation 없음.")
+
     return graph
 
 
