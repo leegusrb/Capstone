@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.api.v1 import documents, knowledge_graphs   # knowledge_graphs 추가
+from app.api.v1 import documents, knowledge_graphs, sessions
 
 
 app = FastAPI(
@@ -19,7 +19,8 @@ app.add_middleware(
 )
 
 app.include_router(documents.router,        prefix="/api/v1")
-app.include_router(knowledge_graphs.router, prefix="/api/v1")   # 추가
+app.include_router(knowledge_graphs.router, prefix="/api/v1")
+app.include_router(sessions.router,         prefix="/api/v1")
 
 
 @app.on_event("startup")
