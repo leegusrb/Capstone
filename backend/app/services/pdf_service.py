@@ -19,6 +19,7 @@ def extract_text_from_pdf(file_path: str) -> List[Tuple[int, str]]:
         reader = PyPDF2.PdfReader(f)
         for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
+            text = text.replace("\x00", "")
             text = text.strip()
             if text:  # 빈 페이지는 건너뜀
                 pages.append((i + 1, text))
