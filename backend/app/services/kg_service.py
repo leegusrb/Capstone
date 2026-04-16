@@ -9,6 +9,11 @@ Knowledge Graph 생성 및 관리 서비스.
   3. KG 비교 / 상태관리 — confirmed / partial / missing / misconception 전이
   4. 조회 헬퍼          — Student LLM용 partial 추출, 커버리지 계산 등
   5. DB 저장/불러오기   — KnowledgeGraph 모델과 연동
+
+[변경 이력]
+  - RelationType Enum 추가: LLM이 생성하는 relation을 고정 타입셋으로 제한
+  - EdgeStatus.MISCONCEPTION 추가: 방향 역전·잘못된 관계 타입 감지 가능
+  - _EXTRACTION_PROMPT 업데이트: 허용 relation 목록 명시`
 """
 
 import json
@@ -24,25 +29,74 @@ from app.models.knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
 
-# 동기 OpenAI 클라이언트 (기존 embedding_service와 동일한 방식)
 _openai_client = OpenAI(api_key=settings.openai_api_key)
 
 
 # ──────────────────────────────────────────────
-# 1. 상태 정의
+# 1. 상태 및 타입 정의
 # ──────────────────────────────────────────────
 
 class NodeStatus(str, Enum):
-    CONFIRMED     = "confirmed"       # 사용자가 정확하게 설명한 개념
-    PARTIAL       = "partial"         # 언급됐지만 설명이 불완전한 개념
-    MISSING       = "missing"         # 아직 설명되지 않은 개념
-    MISCONCEPTION = "misconception"   # 잘못 설명된 오개념
+    CONFIRMED = "confirmed"  # 사용자가 정확하게 설명한 개념
+    PARTIAL = "partial"  # 언급됐지만 설명이 불완전한 개념
+    MISSING = "missing"  # 아직 설명되지 않은 개념
+    MISCONCEPTION = "misconception"  # 잘못 설명된 오개념
 
 
 class EdgeStatus(str, Enum):
-    CONFIRMED = "confirmed"
-    PARTIAL   = "partial"
-    MISSING   = "missing"
+    CONFIRMED = "confirmed"  # 관계를 정확하게 설명함
+    PARTIAL = "partial"  # 관계를 언급했지만 설명이 불완전함
+    MISSING = "missing"  # 관계를 아직 설명하지 않음
+    MISCONCEPTION = "misconception"  # 관계 방향 역전 또는 잘못된 타입으로 설명함
+
+
+class RelationType(str, Enum):
+    """
+    KG에서 허용되는 엣지 relation 고정 타입셋.
+
+    LLM이 relation을 자유롭게 생성하면 같은 관계가 다른 표현으로 나타나
+    Evaluator LLM의 비교 정확도가 떨어진다. 이를 방지하기 위해 9개 타입으로 고정한다.
+
+    선택 기준:
+      - 학습 자료 도메인에 무관하게 범용적으로 적용 가능한 관계만 포함
+      - 7~10개 수준 유지 (너무 세밀하면 LLM이 엉뚱한 타입을 고르는 오류 증가)
+    """
+    # 구조적 관계
+    CONTAINS = "포함한다"  # A가 B를 내부 구성으로 포함  (TCP → 흐름 제어)
+    IS_PART_OF = "구성요소이다"  # A가 B의 부분/구성요소       (슬라이딩 윈도우 → 흐름 제어)
+    IS_TYPE_OF = "종류이다"  # A가 B의 한 유형/종류        (TCP → 전송 계층 프로토콜)
+
+    # 기능적 관계
+    USES = "사용한다"  # A가 B를 수단/방법으로 활용   (흐름 제어 → 슬라이딩 윈도우)
+    REQUIRES = "전제한다"  # A가 동작하려면 B가 필요      (혼잡 제어 → ACK)
+    ENABLES = "가능하게 한다"  # A로 인해 B가 달성됨         (3-way handshake → 연결 수립)
+    CAUSES = "야기한다"  # A가 B를 발생시킴            (혼잡 → 패킷 손실)
+
+    # 설명적 관계
+    HAS_PROPERTY = "특성을 가진다"  # A가 B라는 속성을 가짐       (TCP → 연결 지향)
+    IS_EXAMPLE_OF = "예시이다"  # A가 B의 구체적 예시         (슬라이딩 윈도우 → 흐름 제어 메커니즘)
+
+
+# 프롬프트 삽입용 — 각 타입의 의미 설명 포함
+_RELATION_TYPE_GUIDE = """\
+사용 가능한 relation 목록 (반드시 이 중 하나만 사용할 것):
+┌──────────────────┬────────────────────────────────────────────────────┐
+│ relation 값       │ 사용 조건                                           │
+├──────────────────┼────────────────────────────────────────────────────┤
+│ "포함한다"         │ A가 B를 내부 구성으로 포함하는 경우                    │
+│ "구성요소이다"     │ A가 B의 부분 또는 구성요소인 경우                      │
+│ "종류이다"         │ A가 B의 한 종류 또는 유형인 경우                       │
+│ "사용한다"         │ A가 B를 수단 또는 방법으로 활용하는 경우                │
+│ "전제한다"         │ A가 동작하려면 B가 먼저 필요한 경우                    │
+│ "가능하게 한다"    │ A로 인해 B가 수행되거나 달성되는 경우                   │
+│ "야기한다"         │ A가 B를 발생시키거나 원인이 되는 경우                   │
+│ "특성을 가진다"    │ A가 B라는 속성 또는 특징을 가지는 경우                  │
+│ "예시이다"         │ A가 B의 구체적 예시인 경우                             │
+└──────────────────┴────────────────────────────────────────────────────┘
+위 9개 외의 표현은 절대 사용하지 마세요."""
+
+# RelationType 허용값 집합 (검증용)
+_ALLOWED_RELATIONS: set[str] = {rt.value for rt in RelationType}
 
 
 # ──────────────────────────────────────────────
@@ -103,14 +157,14 @@ _EXTRACTION_PROMPT = """\
    상위 개념 노드에 포함합니다. 전체 노드 수는 5~20개를 목표로 합니다.
 
 ━━━ 엣지 추출 규칙 ━━━
-4. [구체적 동사구 사용] relation에는 두 개념의 관계를 명확히 표현하는 동사구를 사용합니다.
-   허용 예시: "포함한다", "사용한다", "구성요소이다", "전제한다",
-              "연결을 수립한다", "특성을 가진다", "구현 방식으로 사용한다"
+4. [고정 relation 타입 사용] relation은 반드시 아래 9개 중 하나만 사용합니다.
+   임의의 동사구를 만들지 마세요.
 
-5. [추상적 관계 금지] "관련있다", "연관된다" 등 모호한 표현은 relation으로 사용하지 않습니다.
-   반드시 두 개념 사이의 구체적 관계를 표현하는 동사구로 대체하세요.
+""" + _RELATION_TYPE_GUIDE + """
 
-6. [방향성 명시] 모든 엣지는 source → target 방향을 명확히 지정합니다.
+5. [방향성 명시] 모든 엣지는 source → target 방향을 명확히 지정합니다.
+   - 올바른 예: TCP(source) -[포함한다]-> 흐름 제어(target)
+   - 잘못된 예: 흐름 제어(source) -[포함한다]-> TCP(target)  ← 방향 역전
 
 ━━━ 출력 형식 ━━━
 반드시 아래 JSON 형식만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.
@@ -138,7 +192,6 @@ def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx
     Returns:
         Reference KG (nx.DiGraph). 모든 노드 status = "reference".
     """
-    # 청크를 합쳐서 LLM에 전달 (토큰 절약을 위해 6000자 제한)
     combined = "\n\n".join(text_chunks)
     if len(combined) > 6000:
         combined = combined[:6000] + "\n...(이하 생략)"
@@ -153,7 +206,6 @@ def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx
 
     raw = response.choices[0].message.content.strip()
 
-    # 코드블록으로 감싸진 경우 제거
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -166,30 +218,28 @@ def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx
         logger.error("Reference KG JSON 파싱 실패: %s\n원본: %s", e, raw)
         raise ValueError(f"LLM이 올바른 JSON을 반환하지 않았습니다: {e}") from e
 
-    # NetworkX 그래프 구성
     graph = nx.DiGraph()
 
     for node_id in data.get("nodes", []):
         graph.add_node(str(node_id), status="reference")
 
-    # 추상적 relation으로 간주할 표현 목록 (품질 검증용)
-    _ABSTRACT_RELATIONS = {"관련", "관련있다", "연관된다", "연관", "관계있다"}
-
-    abstract_edges_found = []
+    invalid_relations_found = []
 
     for edge in data.get("edges", []):
         src = str(edge["source"])
         tgt = str(edge["target"])
-        rel = str(edge.get("relation", "관련"))
+        rel = str(edge.get("relation", "포함한다"))
 
-        # 추상적 relation 경고 로그 — 프롬프트 규칙 위반 감지
-        if rel in _ABSTRACT_RELATIONS:
+        # ── relation 타입 검증 ──────────────────────────────
+        # 허용된 9개 타입 외의 표현이 나오면 경고 후 가장 유사한 타입으로 fallback
+        if rel not in _ALLOWED_RELATIONS:
             logger.warning(
-                "추상적 relation 감지 (프롬프트 규칙 위반): '%s' -[%s]-> '%s'. "
-                "프롬프트를 점검하거나 해당 엣지를 수동으로 검토하세요.",
+                "허용되지 않은 relation 감지: '%s' -[%s]-> '%s'. "
+                "프롬프트 규칙 위반 — '포함한다'로 fallback 처리합니다.",
                 src, rel, tgt,
             )
-            abstract_edges_found.append((src, rel, tgt))
+            invalid_relations_found.append((src, rel, tgt))
+            rel = RelationType.CONTAINS.value  # 가장 범용적인 타입으로 fallback
 
         if src not in graph:
             graph.add_node(src, status="reference")
@@ -204,15 +254,14 @@ def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx
         graph.number_of_edges(),
     )
 
-    # KG 품질 요약 로그 (팀 교차 검토용)
-    if abstract_edges_found:
+    if invalid_relations_found:
         logger.warning(
-            "추상적 relation 엣지 %d개 발견. 수동 검토 권장: %s",
-            len(abstract_edges_found),
-            abstract_edges_found,
+            "비허용 relation %d개 발견 (fallback 처리됨): %s",
+            len(invalid_relations_found),
+            invalid_relations_found,
         )
     else:
-        logger.info("KG 품질 검증 통과 — 추상적 relation 없음.")
+        logger.info("KG 품질 검증 통과 — 모든 relation이 허용 타입셋 내에 있음.")
 
     return graph
 
@@ -225,6 +274,7 @@ def init_user_kg(reference_kg: nx.DiGraph) -> nx.DiGraph:
     """
     Reference KG를 기반으로 User KG를 초기화한다.
     모든 노드/엣지는 missing 상태로 시작.
+    relation은 Reference KG에서 그대로 복사 (RelationType 보장됨).
     """
     user_kg = nx.DiGraph()
 
@@ -234,7 +284,7 @@ def init_user_kg(reference_kg: nx.DiGraph) -> nx.DiGraph:
     for src, tgt, attrs in reference_kg.edges(data=True):
         user_kg.add_edge(
             src, tgt,
-            relation=attrs.get("relation", "관련"),
+            relation=attrs.get("relation", RelationType.CONTAINS.value),
             status=EdgeStatus.MISSING,
         )
 
@@ -246,29 +296,25 @@ def init_user_kg(reference_kg: nx.DiGraph) -> nx.DiGraph:
 # ──────────────────────────────────────────────
 
 def save_kg_to_db(
-    db: Session,
-    document_id: int,
-    reference_kg: nx.DiGraph,
-    user_kg: nx.DiGraph,
+        db: Session,
+        document_id: int,
+        reference_kg: nx.DiGraph,
+        user_kg: nx.DiGraph,
 ) -> KnowledgeGraph:
-    """
-    Reference KG와 User KG를 DB에 저장한다.
-    이미 존재하면 덮어쓴다.
-    """
+    """Reference KG와 User KG를 DB에 저장한다. 이미 존재하면 덮어쓴다."""
     kg_record = db.query(KnowledgeGraph).filter_by(document_id=document_id).first()
 
-    ref_data  = serialize_kg(reference_kg)
+    ref_data = serialize_kg(reference_kg)
     user_data = serialize_kg(user_kg)
 
     if kg_record:
-        # 이미 있으면 업데이트
         kg_record.reference_kg = ref_data
-        kg_record.user_kg      = user_data
+        kg_record.user_kg = user_data
     else:
         kg_record = KnowledgeGraph(
-            document_id  = document_id,
-            reference_kg = ref_data,
-            user_kg      = user_data,
+            document_id=document_id,
+            reference_kg=ref_data,
+            user_kg=user_data,
         )
         db.add(kg_record)
 
@@ -282,8 +328,7 @@ def load_kg_from_db(db: Session, document_id: int) -> tuple[nx.DiGraph, nx.DiGra
     DB에서 KG를 불러와 NetworkX 그래프로 복원한다.
 
     Returns:
-        (reference_kg, user_kg) 튜플.
-        레코드가 없으면 None 반환.
+        (reference_kg, user_kg) 튜플. 레코드가 없으면 None 반환.
     """
     kg_record = db.query(KnowledgeGraph).filter_by(document_id=document_id).first()
 
@@ -291,7 +336,7 @@ def load_kg_from_db(db: Session, document_id: int) -> tuple[nx.DiGraph, nx.DiGra
         return None
 
     reference_kg = deserialize_kg(kg_record.reference_kg or {"nodes": [], "edges": []})
-    user_kg      = deserialize_kg(kg_record.user_kg      or {"nodes": [], "edges": []})
+    user_kg = deserialize_kg(kg_record.user_kg or {"nodes": [], "edges": []})
 
     return reference_kg, user_kg
 
@@ -301,8 +346,8 @@ def load_kg_from_db(db: Session, document_id: int) -> tuple[nx.DiGraph, nx.DiGra
 # ──────────────────────────────────────────────
 
 def update_user_kg_from_evaluator(
-    user_kg: nx.DiGraph,
-    evaluator_result: dict,
+        user_kg: nx.DiGraph,
+        evaluator_result: dict,
 ) -> nx.DiGraph:
     """
     Evaluator LLM이 반환한 JSON 결과를 User KG에 반영한다.
@@ -311,24 +356,37 @@ def update_user_kg_from_evaluator(
       - updated_user_kg.nodes : [{"id": "TCP", "status": "confirmed"}, ...]
       - updated_user_kg.edges : [{"source": ..., "relation": ..., "target": ..., "status": ...}]
       - misconceptions        : [{"content": "...", "correction": "..."}]
+
+    엣지 status = "misconception" 처리:
+      - 관계 방향 역전 또는 잘못된 relation 타입으로 설명한 경우
+      - User KG에 misconception 상태로 기록하되, Reference KG의 올바른 방향은 유지
     """
     updated = evaluator_result.get("updated_user_kg", {})
 
     for node in updated.get("nodes", []):
         node_id = node["id"]
-        status  = node.get("status", NodeStatus.MISSING)
+        status = node.get("status", NodeStatus.MISSING)
         if node_id in user_kg:
             user_kg.nodes[node_id]["status"] = status
         else:
             user_kg.add_node(node_id, status=status)
 
     for edge in updated.get("edges", []):
-        src    = edge["source"]
-        tgt    = edge["target"]
-        rel    = edge.get("relation", "관련")
+        src = edge["source"]
+        tgt = edge["target"]
+        rel = edge.get("relation", RelationType.CONTAINS.value)
         status = edge.get("status", EdgeStatus.MISSING)
+
+        # relation 타입 검증 — Evaluator LLM도 허용 타입셋 준수 확인
+        if rel not in _ALLOWED_RELATIONS:
+            logger.warning(
+                "Evaluator LLM이 비허용 relation 반환: '%s' -[%s]-> '%s'. fallback 처리.",
+                src, rel, tgt,
+            )
+            rel = RelationType.CONTAINS.value
+
         if user_kg.has_edge(src, tgt):
-            user_kg[src][tgt]["status"]   = status
+            user_kg[src][tgt]["status"] = status
             user_kg[src][tgt]["relation"] = rel
         else:
             if src not in user_kg:
@@ -373,9 +431,9 @@ def get_student_context(user_kg: nx.DiGraph) -> dict:
     """
     return {
         "confirmed_nodes": get_nodes_by_status(user_kg, NodeStatus.CONFIRMED),
-        "partial_nodes":   get_nodes_by_status(user_kg, NodeStatus.PARTIAL),
+        "partial_nodes": get_nodes_by_status(user_kg, NodeStatus.PARTIAL),
         "confirmed_edges": get_edges_by_status(user_kg, EdgeStatus.CONFIRMED),
-        "partial_edges":   get_edges_by_status(user_kg, EdgeStatus.PARTIAL),
+        "partial_edges": get_edges_by_status(user_kg, EdgeStatus.PARTIAL),
     }
 
 
@@ -384,16 +442,24 @@ def get_missing_nodes(user_kg: nx.DiGraph) -> list[str]:
     return get_nodes_by_status(user_kg, NodeStatus.MISSING)
 
 
+def get_misconceptions(user_kg: nx.DiGraph) -> list[dict]:
+    """기록된 오개념 목록 반환."""
+    misc_node = "__misconceptions__"
+    if misc_node not in user_kg:
+        return []
+    return user_kg.nodes[misc_node].get("items", [])
+
+
 def get_kg_coverage(user_kg: nx.DiGraph, reference_kg: nx.DiGraph) -> dict:
     """
     KG 커버리지 계산.
     커버리지 = confirmed 노드 수 / Reference KG 전체 노드 수 × 100
     """
-    total     = reference_kg.number_of_nodes()
+    total = reference_kg.number_of_nodes()
     confirmed = len(get_nodes_by_status(user_kg, NodeStatus.CONFIRMED))
-    coverage  = round(confirmed / total * 100, 1) if total > 0 else 0.0
+    coverage = round(confirmed / total * 100, 1) if total > 0 else 0.0
     return {
-        "confirmed_count":  confirmed,
-        "total_count":      total,
+        "confirmed_count": confirmed,
+        "total_count": total,
         "coverage_percent": coverage,
     }
