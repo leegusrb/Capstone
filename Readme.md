@@ -48,16 +48,16 @@ AI는 답을 주는 튜터가 아닌, **해당 주제에 대해 진짜로 아무
          ▼                    ▼
 ┌─────────────────┐  ┌──────────────────────┐
 │  Student LLM    │  │   Evaluator LLM      │
-│  (학생 에이전트)   │  │   (평가자 에이전트)      │
+│  (학생 에이전트)  │  │   (평가자 에이전트)    │
 │                 │  │                      │
-│ • 사전 지식 없음    │  │ • RAG 학습자료 보유    │
-│ • confirmed /   │  │ • 루브릭 4개 영역       │
+│ • 사전 지식 없음   │  │ • RAG 학습자료 보유   │
+│ • confirmed /   │  │ • 루브릭 4개 영역      │
 │   partial만     │  │   채점                │
-│   참조 가능       │  │ • User KG 업데이트     │
-│ • missing 노드   │  │ • 세션 종료 판단        │
-│   접근 불가       │  │ • 백그라운드 처리        │
-│ • 사용자에게       │  │                      │
-│   직접 노출       │  │                      │
+│   참조 가능      │  │ • User KG 업데이트    │
+│ • missing 노드   │  │ • 세션 종료 판단       │
+│   접근 불가      │  │ • 백그라운드 처리       │
+│ • 사용자에게      │  │                      │
+│   직접 노출      │  │                      │
 └────────┬────────┘  └──────────┬───────────┘
          │                      │
          │         User KG 공유  │
@@ -68,7 +68,7 @@ AI는 답을 주는 튜터가 아닌, **해당 주제에 대해 진짜로 아무
 │  confirmed:     TCP → 연결 지향 (정확)          │
 │  partial:       TCP → 흐름 제어 (관계 모호)     │
 │  missing:       TCP → 혼잡 제어               │
-│  misconception: (오개념 기록)                 │
+│  misconception: 흐름 제어 → TCP (방향 역전)     │
 └─────────────────────────────────────────────┘
 ```
 
@@ -76,9 +76,9 @@ AI는 답을 주는 튜터가 아닌, **해당 주제에 대해 진짜로 아무
 
 ```
 [사전 준비] — 자료 업로드 시 1회 실행
-PDF 업로드 → 텍스트 추출 → 청크 분할
-→ 임베딩 생성 (pgvector 저장)
-→ Reference KG 생성 (핵심 개념 + 관계 추출)
+PDF 업로드 → 텍스트 추출 → 전체 문서 단위 청킹 (페이지 경계 무시)
+→ 임베딩 생성 (pgvector 저장, 배치 100개 단위)
+→ Reference KG 생성 (핵심 개념 + 고정 relation 타입으로 관계 추출)
 → User KG 초기화 (빈 상태)
 
 [실시간 학습] — 매 턴 반복
@@ -106,17 +106,34 @@ PDF 업로드 → 텍스트 추출 → 청크 분할
   │
   └──포함한다──▶ [혼잡 제어]
                        │
-            ──작동 방식──▶ [슬라이딩 윈도우]
+            ──사용한다──▶ [슬라이딩 윈도우]
 ```
 
 ### 노드/엣지 상태
 
-| 상태 | 의미 |
+| 상태 | 노드 | 엣지 |
+|---|---|---|
+| `confirmed` | 정확하게 설명한 개념 | 관계 타입·방향 모두 정확하게 설명함 |
+| `partial` | 언급됐지만 설명이 불완전함 | 관계를 언급했지만 설명이 불완전하거나 타입이 모호함 |
+| `missing` | 아직 설명되지 않음 | 관계를 아직 설명하지 않음 |
+| `misconception` | 오개념으로 잘못 설명함 | 관계 방향 역전 또는 잘못된 타입으로 설명함 |
+
+### 엣지 Relation 고정 타입셋
+
+LLM이 relation을 자유롭게 생성하면 같은 관계가 다른 표현으로 나타나 평가 일관성이 떨어집니다.  
+이를 방지하기 위해 **9개 타입으로 고정**합니다.
+
+| relation | 사용 조건 |
 |---|---|
-| `confirmed` | 사용자가 정확하게 설명한 개념 및 관계 |
-| `partial` | 언급은 됐지만 설명이 불완전하거나 관계가 모호함 |
-| `missing` | Reference KG에 존재하지만 아직 설명되지 않음 |
-| `misconception` | Reference KG에 없는 내용을 사용자가 잘못 설명한 오개념 |
+| `포함한다` | A가 B를 내부 구성으로 포함하는 경우 |
+| `구성요소이다` | A가 B의 부분 또는 구성요소인 경우 |
+| `종류이다` | A가 B의 한 종류 또는 유형인 경우 |
+| `사용한다` | A가 B를 수단 또는 방법으로 활용하는 경우 |
+| `전제한다` | A가 동작하려면 B가 먼저 필요한 경우 |
+| `가능하게 한다` | A로 인해 B가 수행되거나 달성되는 경우 |
+| `야기한다` | A가 B를 발생시키거나 원인이 되는 경우 |
+| `특성을 가진다` | A가 B라는 속성 또는 특징을 가지는 경우 |
+| `예시이다` | A가 B의 구체적 예시인 경우 |
 
 ### Reference KG vs User KG
 
@@ -163,14 +180,21 @@ Evaluator LLM이 사용자의 설명을 4개 영역 × 0~3점 (총 12점 만점)
       { "id": "혼잡 제어", "status": "missing" }
     ],
     "edges": [
-      { "source": "TCP", "relation": "포함", "target": "흐름 제어", "status": "partial" },
-      { "source": "TCP", "relation": "포함", "target": "혼잡 제어", "status": "missing" }
+      { "source": "TCP", "relation": "포함한다", "target": "흐름 제어", "status": "partial" },
+      { "source": "TCP", "relation": "포함한다", "target": "혼잡 제어", "status": "missing" },
+      { "source": "흐름 제어", "relation": "포함한다", "target": "TCP", "status": "misconception" }
     ]
   },
-  "misconceptions": [],
-  "weak_areas": ["specificity", "accuracy"]
+  "misconceptions": [
+    { "content": "흐름 제어가 TCP를 포함한다", "correction": "TCP가 흐름 제어를 포함한다" }
+  ],
+  "weak_areas": ["specificity", "accuracy"],
+  "feedback_summary": "TCP의 특성은 잘 설명했으나 흐름 제어와의 관계 방향이 역전됨."
 }
 ```
+
+> `relation`은 위 9개 고정 타입 중 하나만 사용합니다.  
+> `status: "misconception"`은 관계 방향 역전 또는 잘못된 타입으로 설명한 경우에 기록됩니다.
 
 ---
 
@@ -206,7 +230,9 @@ Evaluator LLM이 사용자의 설명을 4개 영역 × 0~3점 (총 12점 만점)
 │   ├── main.py                 # FastAPI 진입점
 │   ├── routers/                # API 라우터
 │   ├── services/
-│   │   ├── kg_service.py       # Knowledge Graph 관리
+│   │   ├── kg_service.py       # Knowledge Graph 관리 (RelationType 고정 타입셋 포함)
+│   │   ├── pdf_service.py      # PDF 추출 + 전체 문서 단위 청킹
+│   │   ├── embedding_service.py # 임베딩 생성 (배치 100개, 재시도 3회)
 │   │   ├── rag_service.py      # pgvector 유사도 검색
 │   │   ├── student_llm.py      # Student LLM 에이전트
 │   │   └── evaluator_llm.py    # Evaluator LLM 에이전트
@@ -249,14 +275,22 @@ docker compose up --build
 
 ## 📌 현재 개발 상태
 
-- [x] 벡터화 파이프라인 (PDF → 임베딩 → pgvector)
+### 완료
+
+- [x] 벡터화 파이프라인 (PDF → 전체 문서 단위 청킹 → 임베딩 → pgvector)
 - [x] Knowledge Graph 서비스 (`kg_service.py`)
+  - [x] RelationType 9개 고정 타입셋
+  - [x] EdgeStatus.MISCONCEPTION (관계 방향 역전 감지)
 - [x] 2-에이전트 아키텍처 설계 확정
+- [x] Evaluator LLM 프롬프트 및 JSON 스키마 확정
+- [x] 2-에이전트 세션 통합 (`session_service.py`)
+
+### 진행 중 / 예정
+
 - [ ] RAG 서비스 구현 (`rag_service.py`)
-- [ ] Evaluator LLM 프롬프트 설계 및 JSON 스키마 확정
-- [ ] 2-에이전트 세션 통합
 - [ ] 프론트엔드 채팅 인터페이스
 - [ ] 세션 요약 및 KG 커버리지 시각화
+- [ ] Evaluator LLM 루브릭 일관성 검증 (샘플 설명 셋 구성 후 점수 비교)
 
 ---
 
