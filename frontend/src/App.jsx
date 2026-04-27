@@ -1,17 +1,36 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import UploadPage from "./pages/UploadPage";
-import SessionPage from "./pages/SessionPage";
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import Navbar from './components/Navbar';
+import MainPage from './pages/MainPage';
+import UploadAnalysis from './pages/UploadAnalysis';
+import StudentMode from './pages/StudentMode';
+import TeacherMode from './pages/TeacherMode';
+import SessionReport from './pages/SessionReport';
+import MyArchive from './pages/MyArchive';
+import Register from './pages/Register';
+import './App.css';
 
-export default function App() {
+function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        {/* 기본 경로 → 업로드 페이지 */}
-        <Route path="/" element={<Navigate to="/upload" replace />} />
-        <Route path="/upload" element={<UploadPage />} />
-        {/* 다음 주 구현 예정 */}
-        <Route path="/session/:documentId" element={<SessionPage />} />
-      </Routes>
+      <AuthProvider>
+        <div className="app-layout">
+          <Navbar />
+          <main className="page-content">
+            <Routes>
+              <Route path="/" element={<MainPage />} />
+              <Route path="/upload" element={<UploadAnalysis />} />
+              <Route path="/student" element={<StudentMode />} />
+              <Route path="/teacher" element={<TeacherMode />} />
+              <Route path="/report" element={<SessionReport />} />
+              <Route path="/archive" element={<MyArchive />} />
+              <Route path="/register" element={<Register />} />
+            </Routes>
+          </main>
+        </div>
+      </AuthProvider>
     </BrowserRouter>
   );
 }
+
+export default App;
