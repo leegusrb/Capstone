@@ -25,7 +25,10 @@ from openai import OpenAI
 
 from app.config import settings
 from app.services.kg_service import (
+    EdgeStatus,
     NodeStatus,
+    RelationType,
+    _RELATION_TYPE_GUIDE,
     get_missing_nodes,
     get_nodes_by_status,
 )
@@ -46,9 +49,9 @@ SCORE_CATEGORIES     = ["concept", "accuracy", "logic", "specificity"]
 
 @dataclass
 class RubricScores:
-    concept:     int = 0
-    accuracy:    int = 0
-    logic:       int = 0
+    concept: int = 0
+    accuracy: int = 0
+    logic: int = 0
     specificity: int = 0
 
     @property
@@ -57,9 +60,9 @@ class RubricScores:
 
     def to_dict(self) -> dict:
         return {
-            "concept":     self.concept,
-            "accuracy":    self.accuracy,
-            "logic":       self.logic,
+            "concept": self.concept,
+            "accuracy": self.accuracy,
+            "logic": self.logic,
             "specificity": self.specificity,
         }
 
@@ -178,30 +181,29 @@ def _kg_to_prompt_strings(kg: nx.DiGraph) -> tuple[str, str]:
 
 
 def _check_repetition_limit(
-    session_history: list[dict],
-    window: int,
-    max_score: int,
+        session_history: list[dict],
+        window: int,
+        max_score: int,
 ) -> bool:
     """Returns True if all category scores are <= max_score for the last `window` turns."""
     if len(session_history) < window:
         return False
     recent = session_history[-window:]
-    for category in SCORE_CATEGORIES:
-        if any(turn.get(category, 3) > max_score for turn in recent):
+    for scores in recent:
+        if any(scores.get(cat, 0) > max_score for cat in SCORE_CATEGORIES):
             return False
     return True
 
 
-def _parse_llm_json(raw: str) -> dict:
-    text = raw.strip()
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+def _parse_evaluator_json(raw: str) -> dict:
+    """LLM 응답에서 JSON 파싱. 코드블록 제거 포함."""
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
     try:
-        return json.loads(text)
+        return json.loads(raw)
     except json.JSONDecodeError as e:
         logger.error("Evaluator JSON parsing failed: %s\nRaw output: %s", e, raw)
         raise ValueError(f"Evaluator LLM did not return valid JSON: {e}") from e
@@ -210,13 +212,13 @@ def _parse_llm_json(raw: str) -> dict:
 # ── Main function ─────────────────────────────────────────
 
 def evaluate_explanation(
-    user_explanation: str,
-    user_kg: nx.DiGraph,
-    reference_kg: nx.DiGraph,
-    rag_chunks: list[str],
-    session_history: list[dict],
-    turn_count: int,
-    model: str = "gpt-4o-mini",
+        user_explanation: str,
+        user_kg: nx.DiGraph,
+        reference_kg: nx.DiGraph,
+        rag_chunks: list[str],
+        session_history: list[dict],
+        turn_count: int,
+        model: str = "gpt-4o-mini",
 ) -> EvaluatorResult:
     """
     Evaluate the user's explanation and return an EvaluatorResult.
@@ -233,12 +235,13 @@ def evaluate_explanation(
     # Dynamically extract nodes/edges from the actual KG
     ref_nodes_str, ref_edges_str = _kg_to_prompt_strings(reference_kg)
 
-    confirmed_nodes = get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)
-    partial_nodes   = get_nodes_by_status(user_kg, NodeStatus.PARTIAL)
-    missing_nodes   = get_missing_nodes(user_kg)
+    ref_nodes_str, ref_edges_str = _kg_to_prompt_strings(reference_kg)
+    confirmed_nodes = ", ".join(get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)) or "(없음)"
+    partial_nodes = ", ".join(get_nodes_by_status(user_kg, NodeStatus.PARTIAL)) or "(없음)"
+    missing_nodes = ", ".join(get_missing_nodes(user_kg)) or "(없음)"
 
     user_prompt = _EVALUATOR_USER_TEMPLATE.format(
-        rag_context=_build_rag_context(rag_chunks),
+        rag_context=rag_context,
         reference_nodes=ref_nodes_str,
         reference_edges=ref_edges_str,
         confirmed_nodes=", ".join(confirmed_nodes) if confirmed_nodes else "(none)",
@@ -261,20 +264,47 @@ def evaluate_explanation(
         model=model,
         messages=[
             {"role": "system", "content": _EVALUATOR_SYSTEM_PROMPT},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0.1,
         response_format={"type": "json_object"},
     )
 
-    data = _parse_llm_json(response.choices[0].message.content)
+    data = _parse_evaluator_json(response.choices[0].message.content)
 
-    scores_dict = data.get("scores", {})
+    # ── 점수 파싱 ──
+    raw_scores = data.get("scores", {})
     scores = RubricScores(
-        concept=int(scores_dict.get("concept", 0)),
-        accuracy=int(scores_dict.get("accuracy", 0)),
-        logic=int(scores_dict.get("logic", 0)),
-        specificity=int(scores_dict.get("specificity", 0)),
+        concept=int(raw_scores.get("concept", 0)),
+        accuracy=int(raw_scores.get("accuracy", 0)),
+        logic=int(raw_scores.get("logic", 0)),
+        specificity=int(raw_scores.get("specificity", 0)),
+    )
+    total = scores.total
+
+    # ── 세션 종료 판단 ──
+    is_sufficient = False
+    termination_reason = None
+
+    if total >= SCORE_THRESHOLD:
+        is_sufficient = True
+        termination_reason = "score"
+    elif turn_count >= MAX_TURNS:
+        is_sufficient = True
+        termination_reason = "turn_limit"
+    elif _check_repetition_limit(session_history, REPETITION_WINDOW, REPETITION_MAX_SCORE):
+        is_sufficient = True
+        termination_reason = "repetition"
+
+    weak_areas = [
+        cat for cat in SCORE_CATEGORIES
+        if raw_scores.get(cat, 0) <= 2
+    ]
+
+    logger.info(
+        "Evaluator 결과 — 총점: %d/%d | 종료: %s(%s) | weak: %s",
+        total, SCORE_THRESHOLD * (12 // SCORE_THRESHOLD),
+        is_sufficient, termination_reason, weak_areas,
     )
 
     # ── Session termination check ──
@@ -293,12 +323,12 @@ def evaluate_explanation(
 
     result = EvaluatorResult(
         scores=scores,
-        total=scores.total,
+        total=total,
         is_sufficient=is_sufficient,
         termination_reason=termination_reason,
         updated_user_kg=data.get("updated_user_kg", {"nodes": [], "edges": []}),
         misconceptions=data.get("misconceptions", []),
-        weak_areas=data.get("weak_areas", []),
+        weak_areas=weak_areas,
         feedback_summary=data.get("feedback_summary", ""),
     )
 
@@ -308,37 +338,27 @@ def evaluate_explanation(
     )
     return result
 
+# ── 세션 요약 ──────────────────────────────────────────────
 
 def build_session_summary(
-    session_history: list[dict],
-    user_kg: nx.DiGraph,
-    reference_kg: nx.DiGraph,
-    termination_reason: str,
+        session_history: list[dict],
+        user_kg: nx.DiGraph,
+        reference_kg: nx.DiGraph,
+        termination_reason: str,
 ) -> dict:
     """Generate a summary dict to send to the frontend at session end."""
     from app.services.kg_service import get_kg_coverage
 
     score_trend = [
-        {
-            "turn":  i + 1,
-            "total": sum(t.get(c, 0) for c in SCORE_CATEGORIES),
-            **{c: t.get(c, 0) for c in SCORE_CATEGORIES},
-        }
-        for i, t in enumerate(session_history)
+        sum(s.get(cat, 0) for cat in SCORE_CATEGORIES)
+        for s in session_history
     ]
-
-    avg_scores = (
-        {
-            cat: round(sum(t.get(cat, 0) for t in session_history) / len(session_history), 2)
-            for cat in SCORE_CATEGORIES
-        }
-        if session_history else {}
-    )
 
     return {
         "termination_reason": termination_reason,
-        "score_trend":        score_trend,
-        "final_coverage":     get_kg_coverage(user_kg, reference_kg),
-        "missing_nodes":      get_missing_nodes(user_kg),
-        "avg_scores":         avg_scores,
+        "total_turns": len(session_history),
+        "score_trend": score_trend,
+        "final_score": score_trend[-1] if score_trend else 0,
+        "coverage": get_kg_coverage(user_kg, reference_kg),
+        "missing_nodes": get_missing_nodes(user_kg),
     }
