@@ -1,18 +1,18 @@
 """
 services/student_llm.py
 ------------------------
-Student LLM 에이전트.
+Student LLM agent.
 
-역할:
-  - "아무것도 모르는 학생" 페르소나로 사용자에게 질문한다.
-  - User KG의 confirmed/partial 노드만 참조 가능 (missing은 접근·노출 금지).
-  - Evaluator 결과의 feedback_summary와 weak_areas를 참고해 다음 질문을 생성한다.
-  - 세션 시작 시 첫 질문(ice_breaker)도 생성한다.
+Role:
+  - Ask the user questions while maintaining a "knows nothing" student persona.
+  - Can only reference confirmed/partial nodes from the User KG (missing nodes are blocked from access and exposure).
+  - Generates the next question using the Evaluator's feedback_summary and weak_areas.
+  - Also generates the first question (ice_breaker) at session start.
 
-핵심 설계 원칙:
-  - 프롬프트에 삽입되는 모든 개념 목록은 실제 User KG에서 동적으로 추출
-  - missing 노드는 프롬프트에 절대 포함하지 않음 (아키텍처 수준 차단)
-  - topic도 학습자가 업로드한 문서와 세션 시작 시 입력한 값을 그대로 사용
+Core design principles:
+  - All concept lists inserted into prompts are dynamically extracted from the actual User KG
+  - Missing nodes are never included in the prompt (blocked at architecture level)
+  - Topic is taken directly from the document uploaded by the learner and the value entered at session start
 """
 
 import json
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _openai_client = OpenAI(api_key=settings.openai_api_key)
 
 
-# ── 데이터 클래스 ──────────────────────────────────────────
+# ── Data classes ──────────────────────────────────────────
 
 @dataclass
 class StudentResponse:
@@ -36,83 +36,111 @@ class StudentResponse:
     intent: str  # ice_breaker | clarify_partial | probe_depth | request_example | check_relation
 
 
-# ── 프롬프트 ──────────────────────────────────────────────
+# ── Prompts ───────────────────────────────────────────────
 
-_STUDENT_SYSTEM_PROMPT = """\
-당신은 페인만 기법 학습 서비스의 학생 에이전트입니다.
+STUDENT_SYSTEM_PROMPT = """\
+[Role]
+You are a student listening to a teacher explain a concept.
+You have ZERO prior knowledge — you only know what the teacher has explicitly said in this conversation.
 
-페르소나:
-- 해당 주제에 대해 완전히 처음 배우는 학생입니다.
-- 사용자(선생님)가 설명해준 내용만 기억합니다.
-- 아직 설명받지 못한 개념은 전혀 모릅니다. 절대 스스로 아는 척 하지 마세요.
+[Core Constraint]
+- Your ONLY source of knowledge is what the teacher has said so far in this conversation.
+- You do NOT have access to any textbooks, reference material, or external knowledge.
+- Never infer, assume, or complete information that the teacher did not explicitly state.
 
-질문 생성 규칙:
-1. 한 번에 질문 1개만 합니다.
-2. confirmed 개념은 "이해했어요" 식으로 가볍게 언급해도 됩니다.
-3. partial 개념은 "좀 더 자세히 설명해 주실 수 있나요?" 식으로 이어갑니다.
-4. 설명받지 않은 개념은 직접 언급하지 않습니다.
-5. 친근하고 자연스러운 한국어로 작성합니다.
-6. "네~", "아~", "그렇군요!" 같은 반응을 짧게 앞에 붙이면 더 자연스럽습니다.
+[Conversation Phase]
+Before asking, assess the current phase based on what the teacher has said so far:
 
-질문 유형(intent):
-- ice_breaker    : 세션 시작 첫 질문
-- clarify_partial: partial 개념에 대한 추가 설명 요청
-- probe_depth    : confirmed 개념의 작동 원리·이유를 더 깊이 탐구
-- request_example: 구체적 예시나 적용 상황 요청
-- check_relation : 두 개념 사이의 관계 확인
+Phase 1 — The teacher has introduced the topic but has NOT provided any explanation about the key concepts.
+           → Ask the teacher to begin explaining the substance of the topic.
 
-반드시 아래 JSON 형식으로만 응답하세요:
+Phase 2 — The teacher has provided some explanation about the key concepts,
+           but the explanation is incomplete, unclear, or missing critical details.
+           → Ask about the most critical missing or unclear part.
+           → "Most critical" = without this, understanding the explanation is impossible.
+
+Phase 3 — The teacher has explained the key concepts clearly, but has NOT provided a concrete example or illustration.
+           → Ask for a concrete example or illustration to better understand the topic.
+
+[Question Rules]
+1. Your question must target EXACTLY ONE concept or term — not a group, not a list.
+   - If the teacher mentioned multiple items (e.g., A, B, C, D),
+     pick the FIRST one and ask only about that.
+   - NEVER combine multiple items into one question using "each", "all", "every".
+   - BAD:  "What color are apples, strawberries, grapes, and oranges, respectively?"
+   - GOOD: "What color is an apple?"
+2. Ask ONLY ONE question per response. 1–2 sentences max.
+3. Do NOT praise the explanation.
+4. Respond in English.
+5. For confirmed concepts, you may briefly acknowledge understanding (e.g., "I understand that part.").
+6. For partial concepts, ask for more detail (e.g., "Could you explain that a bit more?").
+7. Do NOT directly mention concepts that have not been explained yet.
+8. Write in a friendly and natural tone.
+
+When deciding WHAT to ask (Phase 2 priority order):
+  1st — The most critical piece the teacher implied but never actually explained
+  2nd — A cause-and-effect that was stated but not explained ("Why is that?")
+  3rd — A concept mentioned but left incomplete
+
+[Question Intent Types]
+- ice_breaker     : First question at the start of a session
+- clarify_partial : Request further explanation of a partial concept
+- probe_depth     : Explore the mechanism or reasoning behind a confirmed concept
+- request_example : Ask for a concrete example or real-world application
+- check_relation  : Clarify the relationship between two concepts
+
+You MUST respond ONLY in the following JSON format:
 {
-  "question": "질문 텍스트",
-  "intent": "intent 태그"
+  "question": "Your question text here",
+  "intent": "intent tag"
 }
 """
 
 _STUDENT_FIRST_TURN_TEMPLATE = """\
-=== 학습 주제 ===
+=== Learning Topic ===
 {topic}
 
-=== 상황 ===
-지금 막 학습을 시작했습니다.
-아직 선생님에게 아무 설명도 듣지 못했습니다.
-주제에 대해 가장 기본적인 것부터 설명해달라는 첫 질문을 생성하세요.
-topic 이름을 그대로 언급하되, "이게 뭔지", "어떤 건지" 수준의 열린 질문을 1개 만드세요.
+=== Situation ===
+The session has just started.
+You have not received any explanation from the teacher yet.
+Generate the very first question asking the teacher to explain {topic} from the beginning.
+Mention the topic name directly, and keep it an open-ended question at the level of "what is this" or "what is it about".
 """
 
 _STUDENT_FOLLOWUP_TEMPLATE = """\
-=== 학습 주제 ===
+=== Learning Topic ===
 {topic}
 
-=== 내가 이해한 내용 (선생님이 설명해준 것만) ===
-완전히 이해한 개념 : {confirmed_nodes}
-부분적으로 이해한 개념 : {partial_nodes}
-이해한 관계 : {confirmed_edges}
-불완전하게 이해한 관계 : {partial_edges}
+=== My Current Understanding (based only on what the teacher has explained) ===
+Fully understood concepts    : {confirmed_nodes}
+Partially understood concepts: {partial_nodes}
+Understood relationships     : {confirmed_edges}
+Incomplete relationships     : {partial_edges}
 
-=== 평가자 피드백 (내부 참고 — 사용자에게 직접 말하지 말 것) ===
-보완이 필요한 영역 : {weak_areas}
-이번 설명 요약 : {feedback_summary}
+=== Evaluator Feedback (internal reference — do NOT mention this to the user) ===
+Areas needing improvement    : {weak_areas}
+Summary of this explanation  : {feedback_summary}
 
-=== 이번 세션 최근 대화 ===
+=== Recent Conversation This Session ===
 {conversation_snippet}
 
-=== 질문 생성 지침 ===
-- partial 개념이 있으면 그것을 더 설명해달라는 질문을 우선합니다.
-- weak_areas에 "specificity"가 있으면 구체적 예시를 요청하세요.
-- weak_areas에 "logic"이 있으면 과정이나 순서를 질문하세요.
-- weak_areas에 "accuracy"가 있으면 핵심 정의나 원리를 다시 확인하세요.
-- weak_areas에 "concept"이 있으면 빠진 핵심 개념이 무엇인지 유도하세요.
-- 모두 confirmed이고 partial이 없다면, 확인된 개념 중 하나를 더 깊이 탐구하세요.
-- 이전 대화에서 이미 한 질문과 동일하거나 매우 유사한 질문은 하지 마세요.
-- 질문은 단 1개만 생성하세요.
+=== Question Generation Guidelines ===
+- If partial concepts exist, prioritize asking for further explanation of those.
+- If weak_areas includes "specificity", ask for a concrete example.
+- If weak_areas includes "logic", ask about the process or sequence of steps.
+- If weak_areas includes "accuracy", ask to re-confirm the core definition or principle.
+- If weak_areas includes "concept", ask a guiding question to surface the missing key concept.
+- If all concepts are confirmed and none are partial, probe deeper into one confirmed concept.
+- Do NOT repeat a question that is the same as or very similar to a previous one.
+- Generate exactly ONE question.
 """
 
 
-# ── 내부 헬퍼 ─────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────
 
 def _format_edges(edges: list[dict]) -> str:
     if not edges:
-        return "(없음)"
+        return "(none)"
     return ", ".join(
         f"{e.get('source', '')} -[{e.get('relation', '')}]-> {e.get('target', '')}"
         for e in edges
@@ -120,13 +148,13 @@ def _format_edges(edges: list[dict]) -> str:
 
 
 def _format_conversation(history: list[dict], last_n: int = 6) -> str:
-    """최근 N개 대화만 포함해 토큰을 절약한다."""
+    """Include only the last N messages to save tokens."""
     recent = history[-last_n:] if len(history) > last_n else history
     if not recent:
-        return "(대화 없음)"
+        return "(no conversation yet)"
     lines = []
     for msg in recent:
-        role = "선생님(사용자)" if msg["role"] == "user" else "나(학생)"
+        role = "Teacher (user)" if msg["role"] == "user" else "Me (student)"
         lines.append(f"{role}: {msg['content']}")
     return "\n".join(lines)
 
@@ -142,11 +170,11 @@ def _parse_student_json(raw: str) -> dict:
     try:
         return json.loads(text)
     except Exception as e:
-        logger.warning("Student JSON 파싱 실패, 텍스트 전체를 question으로 사용: %s", e)
+        logger.warning("Student JSON parsing failed, using full text as question: %s", e)
         return {"question": raw.strip(), "intent": "probe_depth"}
 
 
-# ── 메인 함수 ─────────────────────────────────────────────
+# ── Main function ─────────────────────────────────────────
 
 def generate_student_question(
     topic: str,
@@ -158,17 +186,17 @@ def generate_student_question(
     model: str = "gpt-4o-mini",
 ) -> StudentResponse:
     """
-    Student LLM이 다음 질문을 생성한다.
+    Generate the next question from the Student LLM.
 
     Args:
-        topic                : 사용자가 세션 시작 시 입력한 학습 주제 문자열
-        student_context      : kg_service.get_student_context() 결과
-                               confirmed/partial 노드·엣지만 포함, missing 없음
-        conversation_history : 이번 세션의 전체 대화 기록
-        evaluator_feedback   : Evaluator.feedback_summary (빈 문자열 = 첫 턴)
+        topic                : Learning topic string entered by the user at session start
+        student_context      : Result of kg_service.get_student_context()
+                               Contains only confirmed/partial nodes and edges — no missing nodes
+        conversation_history : Full conversation history for this session
+        evaluator_feedback   : Evaluator.feedback_summary (empty string = first turn)
         weak_areas           : Evaluator.weak_areas
-        missing_nodes        : get_missing_nodes() 결과 — 내부 로깅용, 프롬프트에 직접 넣지 않음
-        model                : OpenAI 모델명
+        missing_nodes        : Result of get_missing_nodes() — for internal logging only, never inserted into prompt
+        model                : OpenAI model name
     """
     weak_areas    = weak_areas    or []
     missing_nodes = missing_nodes or []
@@ -185,17 +213,17 @@ def generate_student_question(
 
         user_prompt = _STUDENT_FOLLOWUP_TEMPLATE.format(
             topic=topic,
-            confirmed_nodes=", ".join(confirmed_nodes) if confirmed_nodes else "(없음)",
-            partial_nodes=", ".join(partial_nodes)     if partial_nodes   else "(없음)",
+            confirmed_nodes=", ".join(confirmed_nodes) if confirmed_nodes else "(none)",
+            partial_nodes=", ".join(partial_nodes)     if partial_nodes   else "(none)",
             confirmed_edges=_format_edges(confirmed_edges),
             partial_edges=_format_edges(partial_edges),
-            weak_areas=", ".join(weak_areas)           if weak_areas      else "(없음)",
-            feedback_summary=evaluator_feedback        if evaluator_feedback else "(없음)",
+            weak_areas=", ".join(weak_areas)           if weak_areas      else "(none)",
+            feedback_summary=evaluator_feedback        if evaluator_feedback else "(none)",
             conversation_snippet=_format_conversation(conversation_history),
         )
 
     logger.info(
-        "Student 호출 — 첫 턴: %s | confirmed %d개 | partial %d개 | missing %d개(노출 안 함)",
+        "Student call — first turn: %s | confirmed %d | partial %d | missing %d (not exposed)",
         is_first_turn,
         len(student_context.get("confirmed_nodes", [])),
         len(student_context.get("partial_nodes", [])),
@@ -205,10 +233,10 @@ def generate_student_question(
     response = _openai_client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": _STUDENT_SYSTEM_PROMPT},
+            {"role": "system", "content": STUDENT_SYSTEM_PROMPT},
             {"role": "user",   "content": user_prompt},
         ],
-        temperature=0.7,
+        temperature=0.6,
         response_format={"type": "json_object"},
     )
 
@@ -219,7 +247,7 @@ def generate_student_question(
         intent=data.get("intent", "probe_depth"),
     )
 
-    logger.info("Student 질문 — intent: %s | %s", result.intent, result.question[:80])
+    logger.info("Student question — intent: %s | %s", result.intent, result.question[:80])
     return result
 
 
@@ -230,42 +258,42 @@ def generate_session_closing_message(
     model: str = "gpt-4o-mini",
 ) -> str:
     """
-    세션 종료 시 학생 에이전트의 마무리 메시지를 생성한다.
+    Generate the student agent's closing message at session end.
 
     Args:
-        topic               : 학습 주제
+        topic               : Learning topic
         termination_reason  : "score" | "repetition" | "turn_limit" | "user"
-        session_summary     : build_session_summary() 반환값
-                              (final_coverage, missing_nodes 등 실제 값 포함)
-        model               : OpenAI 모델명
+        session_summary     : Return value of build_session_summary()
+                              (contains actual values like final_coverage, missing_nodes, etc.)
+        model               : OpenAI model name
     """
     coverage         = session_summary.get("final_coverage", {})
     missing          = session_summary.get("missing_nodes", [])
     coverage_percent = coverage.get("coverage_percent", 0)
 
     reason_comment_map = {
-        "score":      "선생님 덕분에 많이 이해했어요!",
-        "repetition": "조금 어렵게 느껴지는 부분이 있는 것 같아요. 학습 자료를 다시 살펴보면 도움이 될 것 같아요.",
-        "turn_limit": "오늘 세션을 마무리할 시간이 됐어요.",
-        "user":       "알겠어요, 오늘은 여기까지 할게요.",
+        "score":      "I feel like I understood a lot thanks to you!",
+        "repetition": "Some parts still feel a bit unclear to me. It might help to review the material again.",
+        "turn_limit": "It looks like it's time to wrap up today's session.",
+        "user":       "Got it, let's stop here for today.",
     }
-    reason_comment = reason_comment_map.get(termination_reason, "세션을 마칩니다.")
+    reason_comment = reason_comment_map.get(termination_reason, "Ending the session.")
 
     missing_str = (
-        f"'{', '.join(missing[:5])}'" + ("등" if len(missing) > 5 else "")
-        if missing else "없음"
+        f"'{', '.join(missing[:5])}'" + (" and more" if len(missing) > 5 else "")
+        if missing else "none"
     )
 
     prompt = f"""\
-학습 주제: {topic}
-세션 종료 사유: {termination_reason} — {reason_comment}
-KG 커버리지: {coverage_percent}% ({coverage.get('confirmed_count', 0)}/{coverage.get('total_count', 0)} 개념 설명 완료)
-아직 설명 못 받은 개념: {missing_str}
+Learning topic: {topic}
+Session termination reason: {termination_reason} — {reason_comment}
+KG coverage: {coverage_percent}% ({coverage.get('confirmed_count', 0)}/{coverage.get('total_count', 0)} concepts explained)
+Concepts not yet explained: {missing_str}
 
-학생 에이전트로서 자연스럽고 따뜻한 마무리 인사를 2~4문장으로 작성해주세요.
-- 커버리지가 70% 이상이면 칭찬 위주로, 미만이면 격려 위주로 작성하세요.
-- 미완료 개념이 있으면 다음 세션에서 들려달라고 제안하세요.
-- 고정된 문구 없이 자연스럽게 작성하세요.
+As the student agent, write a natural and warm closing message in 2–4 sentences.
+- If coverage is 70% or above, focus on praise. If below, focus on encouragement.
+- If there are incomplete concepts, suggest covering them in the next session.
+- Write naturally without fixed phrases.
 """
 
     response = _openai_client.chat.completions.create(
@@ -273,7 +301,7 @@ KG 커버리지: {coverage_percent}% ({coverage.get('confirmed_count', 0)}/{cove
         messages=[
             {
                 "role": "system",
-                "content": "당신은 페인만 기법 학습 서비스의 학생 에이전트입니다. 따뜻하고 격려하는 어조로 응답합니다.",
+                "content": "You are the student agent in a Feynman-technique learning service. Respond in a warm and encouraging tone.",
             },
             {"role": "user", "content": prompt},
         ],

@@ -46,9 +46,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TurnResult:
     """process_turn()의 반환값."""
-    scores:       dict
-    total:        int
-    weak_areas:   list[str]
+    scores:         dict
+    total:          int
+    weak_areas:     list[str]
     misconceptions: list[dict]
 
     next_question: Optional[str] = None
