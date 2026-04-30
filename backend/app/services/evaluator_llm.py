@@ -88,7 +88,8 @@ _EVALUATOR_SYSTEM_PROMPT = """\
 1. 학습자가 제출한 개념 설명을 학습자료(RAG 청크)와 Reference KG를 기준으로 평가합니다.
 2. 4개 루브릭 영역을 채점합니다.
 3. 사용자 설명에서 개념과 관계를 추출해 User KG 업데이트 정보를 생성합니다.
-4. 오개념이 있으면 기록합니다.
+4. 노드별 체크리스트의 각 항목이 사용자 설명에서 충족(met)됐는지 판정합니다.
+5. 오개념이 있으면 기록합니다.
 
 ━━━ 루브릭 채점 기준 (각 0~3점) ━━━
 - concept    : 0=핵심 개념 거의 없음, 1=일부만 포함, 2=대부분 포함, 3=빠짐없이 포함
@@ -96,27 +97,60 @@ _EVALUATOR_SYSTEM_PROMPT = """\
 - logic      : 0=문장 나열 수준, 1=부분적 연결만, 2=흐름은 있으나 일부 비약, 3=원인-과정-결과 자연스럽게 연결
 - specificity: 0=추상적 표현만, 1=약간의 구체화, 2=구체적 표현 포함, 3=예시·적용 상황까지 제시
 
-━━━ User KG 노드 상태 정의 ━━━
-- confirmed    : 사용자가 정확하게 설명한 개념
-- partial      : 언급됐지만 설명이 불완전하거나 관계가 모호함
-- missing      : 아직 설명되지 않음 — 이번 설명에 등장하지 않으면 변경하지 마세요
+━━━ 노드 상태 판정 — 체크리스트 기반 (PDF §6) ━━━
+각 Reference 노드는 체크리스트(2~4개 항목)를 가집니다.
+사용자 설명을 항목별로 met(true)/unmet(false) 판정한 뒤, 그 결과로 노드 상태를 결정합니다.
 
-━━━ User KG 엣지 상태 정의 ━━━
-- confirmed    : 두 개념 사이의 관계를 relation 타입에 맞게 정확하게 설명함
-- partial      : 관계를 언급했지만 설명이 불완전하거나 relation 타입이 모호함
-- missing      : 관계를 아직 설명하지 않음
-- misconception: 관계 방향이 역전됐거나 잘못된 relation 타입으로 설명함
-                 예) Reference: TCP -[포함한다]-> 흐름 제어
-                     사용자: "흐름 제어가 TCP를 포함한다" → 방향 역전 → misconception
+| 상태          | 조건                                                       |
+|--------------|-----------------------------------------------------------|
+| confirmed    | 노드 언급 ✅ AND 체크리스트 전체 항목 met                    |
+| partial      | 노드 언급 ✅ AND 일부만 met (0개 포함, 자료와 모순 없음)      |
+| misconception| 노드 언급 ✅ AND 항목 중 RAG 자료와 명백히 모순되는 설명 존재   |
+| missing      | 노드 언급 ❌ (이번 턴 + 누적 User KG 모두 미언급)            |
+
+「misconception vs partial 경계」
+  자료와 "불완전하지만 방향성 맞음"은 partial, "자료와 직접 모순"은 misconception.
+  예 (partial)       : "TCP는 빠른 프로토콜이다"        — 불완전하지만 틀리지 않음
+  예 (misconception) : "TCP는 비연결 지향 프로토콜이다"  — RAG 자료와 직접 모순
+
+━━━ 엣지 상태 판정 — 구조적 (체크리스트 적용 안 함) ━━━
+| 상태          | 조건                                                                |
+|--------------|--------------------------------------------------------------------|
+| confirmed    | 관계 언급 ✅ AND 방향 일치 AND relation 타입 일치(또는 호환)           |
+| partial      | 관계 언급 ✅ AND 방향 일치 AND relation 타입이 모호하지만 본질 유사     |
+| misconception| 관계 언급 ✅ AND (방향 역전 OR 본질적으로 다른 타입)                    |
+| missing      | 관계 미언급                                                          |
+
+━━━ relation 타입 호환 그룹 (PDF §6-4) ━━━
+같은 그룹 내 혼용은 partial, 다른 그룹 간 혼용은 misconception 으로 판정합니다.
+  · 구성/소속 : 포함한다 / 구성요소이다 / 종류이다       (전체-부분, 상위-하위)
+  · 기능/동작 : 사용한다 / 전제한다 / 가능하게 한다 / 야기한다 (작동·인과)
+  · 속성/예시 : 특성을 가진다 / 예시이다                  (서술적 관계)
+
+━━━ 의미적 역관계 매핑 ━━━
+일부 relation은 방향만 뒤집으면 의미가 동등한 쌍이 존재합니다.
+사용자가 방향과 relation 타입을 함께 뒤집어 표현한 경우는 confirmed 로 처리하세요 (오개념 아님).
+
+| 사용자 표현                   | Reference KG 표현            | 판정                  |
+|------------------------------|-----------------------------|----------------------|
+| B -[구성요소이다]-> A          | A -[포함한다]-> B            | confirmed (의미 동등)   |
+| B -[예시이다]-> A              | A -[종류이다]-> B            | confirmed (의미 동등)   |
+| B -[포함한다]-> A              | A -[포함한다]-> B            | misconception (방향 역전) |
 
 ━━━ 엣지 relation 규칙 ━━━
 updated_user_kg의 edges에서 relation은 반드시 아래 허용 목록 중 하나만 사용하세요.
 
 """ + _RELATION_TYPE_GUIDE + """
 
+━━━ misconception 판정 범위 제한 (PDF §12-4) ━━━
+misconception은 Reference KG에 존재하는 개념/관계에 대해 사용자가 잘못 설명한 경우에만 적용합니다.
+Reference KG에 없는 개념을 사용자가 언급하더라도 평가 범위 밖이므로 User KG에 반영하지 않고 무시합니다.
+이를 통해 자료에 포함되지 않은 내용을 오개념으로 잘못 판정하는 상황을 방지합니다.
+
 ━━━ 중요 규칙 ━━━
-- updated_user_kg에는 이번 설명에서 언급된 노드/엣지만 포함합니다.
-- Reference KG에 없는 개념을 사용자가 잘못 서술했다면 misconceptions에 기록하세요.
+- updated_user_kg.nodes 에는 Reference KG에 존재하는 노드 중 이번 설명에서 언급된 것만 포함합니다.
+- 각 노드에 반드시 checklist_result(항목별 met/unmet 판정)와 completion_ratio(met÷전체)를 함께 반환합니다.
+- checklist_result의 item 텍스트는 입력으로 주어진 항목과 1:1 동일하게 유지하세요 (재작성 금지).
 - 반드시 순수 JSON만 반환하세요. 마크다운·설명 텍스트 없이.
 """
 
@@ -124,21 +158,24 @@ _EVALUATOR_USER_TEMPLATE = """\
 === 학습 자료 (RAG 검색 결과) ===
 {rag_context}
 
-=== Reference KG (평가 기준 — 이 문서에서 추출된 실제 개념 구조) ===
-노드 목록 : {reference_nodes}
-엣지 목록 : {reference_edges}
+=== Reference KG — 노드별 체크리스트 ===
+각 노드의 체크리스트 항목을 사용자 설명과 대조해 met(true)/unmet(false)을 판정하세요.
+source_quote는 항목의 근거가 되는 자료 원문입니다 (참고용).
+
+{reference_nodes_with_checklist}
+
+=== Reference KG — 엣지 ===
+{reference_edges}
 
   ※ 엣지 형식: source -[relation]-> target
-     relation은 위 허용 목록(포함한다/구성요소이다/종류이다/사용한다/전제한다/
-     가능하게 한다/야기한다/특성을 가진다/예시이다) 중 하나입니다.
-     사용자의 설명이 이 relation과 방향을 정확히 반영하는지 판단하세요.
+     사용자 설명에서 두 개념의 관계가 이 방향과 relation 타입을 정확히 반영하는지 판단하세요.
 
-=== 현재 User KG 상태 ===
+=== 현재 User KG 상태 (누적) ===
 confirmed 노드 : {confirmed_nodes}
 partial 노드   : {partial_nodes}
 missing 노드   : {missing_nodes}
 
-=== 사용자 설명 ===
+=== 사용자 설명 (이번 턴) ===
 {user_explanation}
 
 === 출력 형식 (순수 JSON만 반환) ===
@@ -152,7 +189,14 @@ missing 노드   : {missing_nodes}
   "total": 0~12,
   "updated_user_kg": {{
     "nodes": [
-      {{"id": "<Reference KG 노드 중 이번 설명에서 언급된 것>", "status": "confirmed|partial|missing"}}
+      {{
+        "id": "<Reference KG 노드 중 이번 설명에서 언급된 것>",
+        "status": "confirmed|partial|missing|misconception",
+        "checklist_result": [
+          {{"item": "<해당 노드 체크리스트 항목 원문>", "met": true|false}}
+        ],
+        "completion_ratio": 0.0~1.0
+      }}
     ],
     "edges": [
       {{
@@ -164,7 +208,7 @@ missing 노드   : {missing_nodes}
     ]
   }},
   "misconceptions": [
-    {{"content": "<사용자의 잘못된 설명>", "correction": "<올바른 설명>"}}
+    {{"node": "<관련 노드 id, 옵션>", "content": "<사용자의 잘못된 설명>", "correction": "<올바른 설명>"}}
   ],
   "weak_areas": ["concept|accuracy|logic|specificity 중 2점 이하인 영역"],
   "feedback_summary": "Student LLM이 다음 질문을 생성할 때 참고할 2~3문장 요약"
@@ -180,27 +224,48 @@ def _build_rag_context(rag_chunks: list[str]) -> str:
     return "\n\n".join(f"[청크 {i + 1}]\n{chunk}" for i, chunk in enumerate(rag_chunks))
 
 
-def _kg_to_prompt_strings(kg: nx.DiGraph) -> tuple[str, str]:
+def _format_reference_kg_with_checklist(reference_kg: nx.DiGraph) -> str:
     """
-    실제 KG 그래프에서 노드/엣지를 추출해 프롬프트 삽입용 문자열로 변환한다.
+    Reference KG의 모든 노드를 체크리스트 항목과 함께 펼쳐서 프롬프트에 삽입할 문자열로 만든다.
 
-    엣지 출력 형식: "TCP -[포함한다]-> 흐름 제어(missing)"
-    → relation 타입과 현재 status를 함께 노출해 Evaluator LLM이
-      Reference와 사용자 설명을 정확히 비교할 수 있게 한다.
+    출력 예:
+        [노드: TCP]
+          체크리스트:
+            1. 연결 지향 방식임을 명시
+               (출처: "TCP는 연결 지향(connection-oriented) 프로토콜이다.")
+            2. 신뢰성 보장 메커니즘 언급
+               (출처: "TCP는 손실된 패킷의 재전송과 순서 보장을 통해 ...")
     """
-    nodes = [
-        f"{node_id}(status={attrs.get('status', '?')})"
-        for node_id, attrs in kg.nodes(data=True)
-        if node_id != "__misconceptions__"
-    ]
+    if reference_kg.number_of_nodes() == 0:
+        return "(Reference KG 노드 없음)"
+
+    blocks = []
+    for node_id, attrs in reference_kg.nodes(data=True):
+        if node_id == "__misconceptions__":
+            continue
+        checklist = attrs.get("checklist", [])
+        lines = [f"[노드: {node_id}]"]
+        if checklist:
+            lines.append("  체크리스트:")
+            for idx, item in enumerate(checklist, start=1):
+                item_text = item.get("item", "")
+                source_quote = item.get("source_quote", "")
+                lines.append(f"    {idx}. {item_text}")
+                if source_quote:
+                    lines.append(f'       (출처: "{source_quote}")')
+        else:
+            lines.append("  체크리스트: (없음 — 노드 언급 여부만으로 판정)")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _format_reference_edges(reference_kg: nx.DiGraph) -> str:
+    """Reference KG의 엣지를 'src -[relation]-> tgt' 한 줄 단위 문자열로 변환."""
     edges = [
-        f"{src} -[{attrs.get('relation', '?')}]-> {tgt}(status={attrs.get('status', '?')})"
-        for src, tgt, attrs in kg.edges(data=True)
+        f"{src} -[{attrs.get('relation', '?')}]-> {tgt}"
+        for src, tgt, attrs in reference_kg.edges(data=True)
     ]
-    return (
-        ", ".join(nodes) if nodes else "(노드 없음)",
-        ", ".join(edges) if edges else "(엣지 없음)",
-    )
+    return "\n".join(edges) if edges else "(엣지 없음)"
 
 
 def _check_repetition_limit(
@@ -258,15 +323,16 @@ def evaluate_explanation(
     # ── 프롬프트 변수 구성 ──
     rag_context = _build_rag_context(rag_chunks)
 
-    ref_nodes_str, ref_edges_str = _kg_to_prompt_strings(reference_kg)
+    reference_nodes_with_checklist = _format_reference_kg_with_checklist(reference_kg)
+    reference_edges = _format_reference_edges(reference_kg)
     confirmed_nodes = ", ".join(get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)) or "(없음)"
     partial_nodes = ", ".join(get_nodes_by_status(user_kg, NodeStatus.PARTIAL)) or "(없음)"
     missing_nodes = ", ".join(get_missing_nodes(user_kg)) or "(없음)"
 
     user_prompt = _EVALUATOR_USER_TEMPLATE.format(
         rag_context=rag_context,
-        reference_nodes=ref_nodes_str,
-        reference_edges=ref_edges_str,
+        reference_nodes_with_checklist=reference_nodes_with_checklist,
+        reference_edges=reference_edges,
         confirmed_nodes=confirmed_nodes,
         partial_nodes=partial_nodes,
         missing_nodes=missing_nodes,
@@ -342,8 +408,16 @@ def build_session_summary(
         reference_kg: nx.DiGraph,
         termination_reason: str,
 ) -> dict:
-    """세션 종료 시 요약 정보를 생성한다."""
-    from app.services.kg_service import get_kg_coverage, get_missing_nodes
+    """세션 종료 시 요약 정보를 생성한다.
+
+    node_progress 는 노드별 met/total 카운트와 completion_ratio만 포함하며,
+    체크리스트 항목 텍스트는 노출하지 않는다 (PDF §12-5 학습 효과 보존).
+    """
+    from app.services.kg_service import (
+        get_kg_coverage,
+        get_missing_nodes,
+        get_user_kg_view_for_session_summary,
+    )
 
     score_trend = [
         sum(s.get(cat, 0) for cat in SCORE_CATEGORIES)
@@ -357,4 +431,5 @@ def build_session_summary(
         "final_score": score_trend[-1] if score_trend else 0,
         "coverage": get_kg_coverage(user_kg, reference_kg),
         "missing_nodes": get_missing_nodes(user_kg),
+        "node_progress": get_user_kg_view_for_session_summary(user_kg),
     }
