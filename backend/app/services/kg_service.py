@@ -1,35 +1,36 @@
 """
 services/kg_service.py
 ----------------------
-Knowledge Graph 생성 및 관리 서비스.
+Knowledge Graph 관리 서비스.
 
 주요 역할:
-  1. Reference KG 생성  — PDF 청크 텍스트 → LLM → NetworkX → JSON 직렬화
-  2. User KG 초기화     — Reference KG의 모든 노드/엣지를 missing 상태로 복사
-  3. KG 비교 / 상태관리 — confirmed / partial / missing / misconception 전이
-  4. 조회 헬퍼          — Student LLM용 partial 추출, 커버리지 계산 등
-  5. DB 저장/불러오기   — KnowledgeGraph 모델과 연동
+  1. User KG 초기화     — Reference KG의 모든 노드/엣지를 missing 상태로 복사
+                          (노드별 체크리스트는 Evaluator 전용으로 동거 보존)
+  2. KG 비교 / 상태관리 — confirmed / partial / missing / misconception 전이
+  3. 조회 헬퍼          — Student LLM용 partial 추출, 커버리지 계산 등
+  4. DB 저장/불러오기   — KnowledgeGraph 모델과 연동
+  5. 사용자 노출 변환   — 세션 종료 후 노드별 진행도(체크리스트 항목 미노출)
+
+Reference KG 생성은 services/reference_kg_generator.py 가 담당한다.
 
 [변경 이력]
   - RelationType Enum 추가: LLM이 생성하는 relation을 고정 타입셋으로 제한
   - EdgeStatus.MISCONCEPTION 추가: 방향 역전·잘못된 관계 타입 감지 가능
-  - _EXTRACTION_PROMPT 업데이트: 허용 relation 목록 명시`
+  - build_reference_kg / _EXTRACTION_PROMPT 제거
+    → reference_kg_generator.generate_reference_kg() 로 통합
+  - init_user_kg / update_user_kg_from_evaluator: 체크리스트 정보 처리 추가
+  - get_user_kg_view_for_session_summary 신설 (사용자 노출 가공)
 """
 
-import json
 import logging
 from enum import Enum
 
 import networkx as nx
-from openai import OpenAI
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
-
-_openai_client = OpenAI(api_key=settings.openai_api_key)
 
 
 # ──────────────────────────────────────────────
@@ -135,151 +136,32 @@ def deserialize_kg(data: dict) -> nx.DiGraph:
 
 
 # ──────────────────────────────────────────────
-# 3. Reference KG 생성 (LLM 호출)
-# ──────────────────────────────────────────────
-
-_EXTRACTION_PROMPT = """\
-당신은 학습 자료에서 핵심 개념과 개념 간 관계를 추출하는 전문가입니다.
-
-아래 학습 자료 텍스트를 분석해서 지식 그래프 형태로 정리해주세요.
-
-━━━ 노드 추출 규칙 ━━━
-1. [단일 개념 원칙] 하나의 노드는 반드시 하나의 단일 개념 또는 용어만 나타냅니다.
-   - 복합 개념(예: "흐름 제어와 혼잡 제어")은 반드시 별도 노드로 분리하세요.
-   - 잘못된 예: 노드 = "흐름 제어와 혼잡 제어"
-   - 올바른 예: 노드 = "흐름 제어", 노드 = "혼잡 제어"
-
-2. [하위 메커니즘 분리] 특정 개념의 구현 방식·구성 요소·하위 메커니즘이
-   독립적으로 설명 가능한 경우 별도 노드로 추출합니다.
-   - 예: "흐름 제어" → 하위에 "슬라이딩 윈도우", "버퍼"를 별도 노드로 분리
-
-3. [과도한 세분화 금지] 자료에서 핵심 역할을 하지 않는 지나치게 세부적인 용어는
-   상위 개념 노드에 포함합니다. 전체 노드 수는 5~20개를 목표로 합니다.
-
-━━━ 엣지 추출 규칙 ━━━
-4. [고정 relation 타입 사용] relation은 반드시 아래 9개 중 하나만 사용합니다.
-   임의의 동사구를 만들지 마세요.
-
-""" + _RELATION_TYPE_GUIDE + """
-
-5. [방향성 명시] 모든 엣지는 source → target 방향을 명확히 지정합니다.
-   - 올바른 예: TCP(source) -[포함한다]-> 흐름 제어(target)
-   - 잘못된 예: 흐름 제어(source) -[포함한다]-> TCP(target)  ← 방향 역전
-
-━━━ 출력 형식 ━━━
-반드시 아래 JSON 형식만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.
-
-{
-  "nodes": ["개념1", "개념2"],
-  "edges": [
-    {"source": "개념1", "relation": "포함한다", "target": "개념2"}
-  ]
-}
-
-학습 자료:
-"""
-
-
-def build_reference_kg(text_chunks: list[str], model: str = "gpt-4o-mini") -> nx.DiGraph:
-    """
-    PDF 청크 텍스트 리스트 → LLM → Reference KG 생성.
-    문서 업로드 시 1회만 실행.
-
-    Args:
-        text_chunks : pdf_service.extract_and_chunk_pdf()에서 추출한 텍스트 청크 목록
-        model       : 사용할 OpenAI 모델 (기본값: gpt-4o-mini)
-
-    Returns:
-        Reference KG (nx.DiGraph). 모든 노드 status = "reference".
-    """
-    combined = "\n\n".join(text_chunks)
-    if len(combined) > 6000:
-        combined = combined[:6000] + "\n...(이하 생략)"
-
-    logger.info("Reference KG 추출 시작 (텍스트 %d자)", len(combined))
-
-    response = _openai_client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": _EXTRACTION_PROMPT + combined}],
-        temperature=0.1,
-    )
-
-    raw = response.choices[0].message.content.strip()
-
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error("Reference KG JSON 파싱 실패: %s\n원본: %s", e, raw)
-        raise ValueError(f"LLM이 올바른 JSON을 반환하지 않았습니다: {e}") from e
-
-    graph = nx.DiGraph()
-
-    for node_id in data.get("nodes", []):
-        graph.add_node(str(node_id), status="reference")
-
-    invalid_relations_found = []
-
-    for edge in data.get("edges", []):
-        src = str(edge["source"])
-        tgt = str(edge["target"])
-        rel = str(edge.get("relation", "포함한다"))
-
-        # ── relation 타입 검증 ──────────────────────────────
-        # 허용된 9개 타입 외의 표현이 나오면 경고 후 가장 유사한 타입으로 fallback
-        if rel not in _ALLOWED_RELATIONS:
-            logger.warning(
-                "허용되지 않은 relation 감지: '%s' -[%s]-> '%s'. "
-                "프롬프트 규칙 위반 — '포함한다'로 fallback 처리합니다.",
-                src, rel, tgt,
-            )
-            invalid_relations_found.append((src, rel, tgt))
-            rel = RelationType.CONTAINS.value  # 가장 범용적인 타입으로 fallback
-
-        if src not in graph:
-            graph.add_node(src, status="reference")
-        if tgt not in graph:
-            graph.add_node(tgt, status="reference")
-
-        graph.add_edge(src, tgt, relation=rel, status="reference")
-
-    logger.info(
-        "Reference KG 생성 완료 — 노드 %d개, 엣지 %d개",
-        graph.number_of_nodes(),
-        graph.number_of_edges(),
-    )
-
-    if invalid_relations_found:
-        logger.warning(
-            "비허용 relation %d개 발견 (fallback 처리됨): %s",
-            len(invalid_relations_found),
-            invalid_relations_found,
-        )
-    else:
-        logger.info("KG 품질 검증 통과 — 모든 relation이 허용 타입셋 내에 있음.")
-
-    return graph
-
-
-# ──────────────────────────────────────────────
-# 4. User KG 초기화
+# 3. User KG 초기화
 # ──────────────────────────────────────────────
 
 def init_user_kg(reference_kg: nx.DiGraph) -> nx.DiGraph:
     """
     Reference KG를 기반으로 User KG를 초기화한다.
     모든 노드/엣지는 missing 상태로 시작.
-    relation은 Reference KG에서 그대로 복사 (RelationType 보장됨).
+
+    노드별 체크리스트(`checklist`)는 Reference KG에서 그대로 복사한다.
+    Evaluator LLM 전용 정보로, Student LLM 컨텍스트나 사용자 응답에는 노출되지 않는다
+    (PDF §4-1, §5-3 참고).
+
+    추가 필드:
+      - checklist_result : 매 턴 Evaluator가 갱신하는 [{"item", "met"}] 배열
+      - completion_ratio : met 항목 수 ÷ 전체 항목 수
     """
     user_kg = nx.DiGraph()
 
-    for node_id in reference_kg.nodes():
-        user_kg.add_node(node_id, status=NodeStatus.MISSING)
+    for node_id, attrs in reference_kg.nodes(data=True):
+        user_kg.add_node(
+            node_id,
+            status=NodeStatus.MISSING,
+            checklist=attrs.get("checklist", []),
+            checklist_result=[],
+            completion_ratio=0.0,
+        )
 
     for src, tgt, attrs in reference_kg.edges(data=True):
         user_kg.add_edge(
@@ -352,24 +234,37 @@ def update_user_kg_from_evaluator(
     """
     Evaluator LLM이 반환한 JSON 결과를 User KG에 반영한다.
 
-    evaluator_result 필드:
-      - updated_user_kg.nodes : [{"id": "TCP", "status": "confirmed"}, ...]
-      - updated_user_kg.edges : [{"source": ..., "relation": ..., "target": ..., "status": ...}]
-      - misconceptions        : [{"content": "...", "correction": "..."}]
+    evaluator_result.updated_user_kg.nodes 형식 (PDF §6-3):
+      {
+        "id": "TCP",
+        "status": "confirmed|partial|missing|misconception",
+        "checklist_result": [{"item": "...", "met": true/false}, ...],
+        "completion_ratio": 0.0~1.0
+      }
 
-    엣지 status = "misconception" 처리:
-      - 관계 방향 역전 또는 잘못된 relation 타입으로 설명한 경우
-      - User KG에 misconception 상태로 기록하되, Reference KG의 올바른 방향은 유지
+    노드 상태(status)는 PDF §6 표에 따라 Evaluator가 이미 판정한 값을 그대로 신뢰한다.
+    체크리스트 항목 met 여부 ↔ 노드 상태의 정합성 검증은 Evaluator의 권한이며,
+    여기서는 단순 저장만 수행한다.
     """
     updated = evaluator_result.get("updated_user_kg", {})
 
     for node in updated.get("nodes", []):
         node_id = node["id"]
         status = node.get("status", NodeStatus.MISSING)
+        checklist_result = node.get("checklist_result", [])
+        completion_ratio = float(node.get("completion_ratio", 0.0))
+
         if node_id in user_kg:
             user_kg.nodes[node_id]["status"] = status
+            user_kg.nodes[node_id]["checklist_result"] = checklist_result
+            user_kg.nodes[node_id]["completion_ratio"] = completion_ratio
         else:
-            user_kg.add_node(node_id, status=status)
+            # Reference KG에 없는 노드는 평가 범위 밖이므로 무시 (PDF §12-4).
+            logger.debug(
+                "Evaluator가 Reference KG 외 노드 반환: %s — User KG 미반영",
+                node_id,
+            )
+            continue
 
     for edge in updated.get("edges", []):
         src = edge["source"]
@@ -388,12 +283,15 @@ def update_user_kg_from_evaluator(
         if user_kg.has_edge(src, tgt):
             user_kg[src][tgt]["status"] = status
             user_kg[src][tgt]["relation"] = rel
-        else:
-            if src not in user_kg:
-                user_kg.add_node(src, status=NodeStatus.CONFIRMED)
-            if tgt not in user_kg:
-                user_kg.add_node(tgt, status=NodeStatus.CONFIRMED)
+        elif src in user_kg and tgt in user_kg:
+            # Reference KG에 없던 엣지지만 양 끝 노드는 존재 → misconception 기록 가능
             user_kg.add_edge(src, tgt, relation=rel, status=status)
+        else:
+            # 평가 범위 밖 노드를 끝점으로 가진 엣지는 무시
+            logger.debug(
+                "Evaluator가 Reference KG 외 엣지 반환: %s -[%s]-> %s — User KG 미반영",
+                src, rel, tgt,
+            )
 
     # 오개념 기록
     for misc in evaluator_result.get("misconceptions", []):
@@ -463,3 +361,50 @@ def get_kg_coverage(user_kg: nx.DiGraph, reference_kg: nx.DiGraph) -> dict:
         "total_count": total,
         "coverage_percent": coverage,
     }
+
+
+# ──────────────────────────────────────────────
+# 8. 사용자 노출 변환 (세션 종료 후 리포트용)
+# ──────────────────────────────────────────────
+
+def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
+    """
+    세션 종료 후 사용자에게 보여줄 노드별 진행도 요약.
+
+    PDF §12-5 트레이드오프에 따라 체크리스트 항목 텍스트는 노출하지 않고,
+    "X 노드의 N개 항목 중 M개 충족" 형태로 정량 정보만 제공한다.
+    """
+    view = []
+    for node_id, attrs in user_kg.nodes(data=True):
+        if node_id == "__misconceptions__":
+            continue
+        checklist_result = attrs.get("checklist_result", [])
+        total_count = len(attrs.get("checklist", []))
+        met_count = sum(1 for item in checklist_result if item.get("met"))
+        view.append({
+            "id": node_id,
+            "status": attrs.get("status", NodeStatus.MISSING),
+            "met_count": met_count,
+            "total_count": total_count,
+            "completion_ratio": float(attrs.get("completion_ratio", 0.0)),
+        })
+    return view
+
+
+def strip_internal_fields_from_kg_dict(kg_dict: dict) -> dict:
+    """
+    직렬화된 User KG dict에서 사용자 노출용 필드만 남긴다.
+    체크리스트 원문(checklist, checklist_result.item)을 모두 제거.
+    GET /knowledge_graphs API 응답에 사용.
+    """
+    safe_nodes = []
+    for node in kg_dict.get("nodes", []):
+        safe = {k: v for k, v in node.items() if k not in {"checklist", "checklist_result"}}
+        # 진행도 정보는 met/total 카운트로 환산해 노출
+        checklist_result = node.get("checklist_result", [])
+        total = len(node.get("checklist", []))
+        met = sum(1 for item in checklist_result if item.get("met"))
+        safe["met_count"] = met
+        safe["total_count"] = total
+        safe_nodes.append(safe)
+    return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}

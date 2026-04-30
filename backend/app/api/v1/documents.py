@@ -10,10 +10,10 @@ from app.schemas.document import DocumentUploadResponse, DocumentStatusResponse
 from app.services.pdf_service import save_uploaded_file, extract_and_chunk_pdf
 from app.services.embedding_service import embed_and_save_chunks
 from app.services.kg_service import (
-    build_reference_kg,
     init_user_kg,
     save_kg_to_db,
 )
+from app.services.reference_kg_generator import generate_reference_kg
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -70,8 +70,9 @@ async def upload_document(
         chunk_count = embed_and_save_chunks(db, document, chunk_data_list)
 
         # 6. Reference KG 생성 — 청크 텍스트만 추출해서 LLM에 전달
+        #    노드별 체크리스트 + Self-Consistency 적용된 v3.2 generator 사용
         text_chunks = [c["content"] for c in chunk_data_list]
-        reference_kg = build_reference_kg(text_chunks)
+        reference_kg = generate_reference_kg(text_chunks)
 
         # 7. User KG 초기화 — Reference KG의 모든 노드/엣지를 missing 상태로 복사
         user_kg = init_user_kg(reference_kg)

@@ -10,6 +10,7 @@ from app.services.kg_service import (
     get_kg_coverage,
     get_missing_nodes,
     get_student_context,
+    strip_internal_fields_from_kg_dict,
 )
 from fastapi import HTTPException
 
@@ -69,10 +70,12 @@ def get_knowledge_graph(
     reference_kg = deserialize_kg(kg_record.reference_kg or {"nodes": [], "edges": []})
     user_kg      = deserialize_kg(kg_record.user_kg      or {"nodes": [], "edges": []})
 
+    # 체크리스트 원문은 사용자에게 노출하지 않는다 (PDF §4-1, §12-5).
+    # met_count / total_count 형태의 정량 정보만 남긴다.
     return {
         "document_id":    document_id,
-        "reference_kg":   kg_record.reference_kg,
-        "user_kg":        kg_record.user_kg,
+        "reference_kg":   strip_internal_fields_from_kg_dict(kg_record.reference_kg or {"nodes": [], "edges": []}),
+        "user_kg":        strip_internal_fields_from_kg_dict(kg_record.user_kg      or {"nodes": [], "edges": []}),
         "coverage":       get_kg_coverage(user_kg, reference_kg),
         "missing_nodes":  get_missing_nodes(user_kg),
         "student_context": get_student_context(user_kg),
@@ -84,11 +87,11 @@ def get_reference_kg(
     document_id: int,
     db: Session = Depends(get_db),
 ):
-    """Reference KG만 반환한다."""
+    """Reference KG만 반환한다 (체크리스트 원문 제외)."""
     kg_record = _get_kg_or_404(db, document_id)
     return {
         "document_id":  document_id,
-        "reference_kg": kg_record.reference_kg,
+        "reference_kg": strip_internal_fields_from_kg_dict(kg_record.reference_kg or {"nodes": [], "edges": []}),
     }
 
 
@@ -100,6 +103,7 @@ def get_user_kg(
     """
     User KG와 학습 진행 현황을 반환한다.
     세션 종료 화면 또는 프론트엔드 KG 시각화에서 사용.
+    체크리스트 원문은 노출되지 않으며, met_count/total_count로 진행도만 노출된다.
     """
     kg_record = _get_kg_or_404(db, document_id)
 
@@ -108,7 +112,7 @@ def get_user_kg(
 
     return {
         "document_id":  document_id,
-        "user_kg":      kg_record.user_kg,
+        "user_kg":      strip_internal_fields_from_kg_dict(kg_record.user_kg or {"nodes": [], "edges": []}),
         "coverage":     get_kg_coverage(user_kg, reference_kg),
         "missing_nodes": get_missing_nodes(user_kg),
     }
