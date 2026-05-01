@@ -366,13 +366,19 @@ def get_kg_coverage(user_kg: nx.DiGraph, reference_kg: nx.DiGraph) -> dict:
 # ──────────────────────────────────────────────
 # 8. 사용자 노출 변환 (세션 종료 후 리포트용)
 # ──────────────────────────────────────────────
+#
+# 노출 정책 (세션 진행 중에는 KG 자체를 사용자에게 보여주지 않음):
+#   - Reference KG 응답: 체크리스트 정보 전체 제거 (정답 기준 노출 방지)
+#   - User KG 응답    : checklist_result(항목 텍스트 + met/unmet) 노출,
+#                       Reference에서 복사된 원본 checklist와 source_quote는 제거.
+#                       세션 종료 후 사용자가 어느 항목을 빠뜨렸는지 직접 확인 가능.
 
 def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
     """
     세션 종료 후 사용자에게 보여줄 노드별 진행도 요약.
 
-    PDF §12-5 트레이드오프에 따라 체크리스트 항목 텍스트는 노출하지 않고,
-    "X 노드의 N개 항목 중 M개 충족" 형태로 정량 정보만 제공한다.
+    각 노드에 항목별 met/unmet 결과(checklist_result)를 포함한다.
+    source_quote(학습자료 원문 인용)는 노출하지 않는다.
     """
     view = []
     for node_id, attrs in user_kg.nodes(data=True):
@@ -381,30 +387,52 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
         checklist_result = attrs.get("checklist_result", [])
         total_count = len(attrs.get("checklist", []))
         met_count = sum(1 for item in checklist_result if item.get("met"))
+        # checklist_result는 {item, met}만 노출 (source_quote가 들어와도 제거)
+        sanitized_result = [
+            {"item": item.get("item", ""), "met": bool(item.get("met"))}
+            for item in checklist_result
+        ]
         view.append({
             "id": node_id,
             "status": attrs.get("status", NodeStatus.MISSING),
             "met_count": met_count,
             "total_count": total_count,
             "completion_ratio": float(attrs.get("completion_ratio", 0.0)),
+            "checklist_result": sanitized_result,
         })
     return view
 
 
-def strip_internal_fields_from_kg_dict(kg_dict: dict) -> dict:
+def strip_checklist_for_reference_view(kg_dict: dict) -> dict:
     """
-    직렬화된 User KG dict에서 사용자 노출용 필드만 남긴다.
-    체크리스트 원문(checklist, checklist_result.item)을 모두 제거.
-    GET /knowledge_graphs API 응답에 사용.
+    Reference KG dict에서 모든 체크리스트 정보를 제거한다.
+    정답 기준이 노출되면 학습 효과가 훼손되므로 GET /reference 응답 직전에 사용.
+    """
+    safe_nodes = [
+        {k: v for k, v in node.items() if k not in {"checklist", "checklist_result"}}
+        for node in kg_dict.get("nodes", [])
+    ]
+    return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
+
+
+def strip_checklist_for_user_view(kg_dict: dict) -> dict:
+    """
+    User KG dict를 사용자 노출용으로 가공한다.
+
+    제거    : Reference에서 복사된 원본 checklist (item + source_quote)
+    노출    : checklist_result.{item, met} (source_quote는 떨어뜨림)
+    추가    : met_count / total_count 정량 카운트
     """
     safe_nodes = []
     for node in kg_dict.get("nodes", []):
-        safe = {k: v for k, v in node.items() if k not in {"checklist", "checklist_result"}}
-        # 진행도 정보는 met/total 카운트로 환산해 노출
+        safe = {k: v for k, v in node.items() if k != "checklist"}
         checklist_result = node.get("checklist_result", [])
-        total = len(node.get("checklist", []))
-        met = sum(1 for item in checklist_result if item.get("met"))
-        safe["met_count"] = met
-        safe["total_count"] = total
+        sanitized_result = [
+            {"item": item.get("item", ""), "met": bool(item.get("met"))}
+            for item in checklist_result
+        ]
+        safe["checklist_result"] = sanitized_result
+        safe["met_count"] = sum(1 for item in sanitized_result if item["met"])
+        safe["total_count"] = len(node.get("checklist", []))
         safe_nodes.append(safe)
     return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
