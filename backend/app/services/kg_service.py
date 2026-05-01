@@ -377,28 +377,37 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
     """
     세션 종료 후 사용자에게 보여줄 노드별 진행도 요약.
 
-    각 노드에 항목별 met/unmet 결과(checklist_result)를 포함한다.
-    source_quote(학습자료 원문 인용)는 노출하지 않는다.
+    각 노드의 체크리스트 전체 항목 + met/unmet 결과를 함께 노출한다.
+    source_quote(학습자료 원문 인용)는 제거.
     """
     view = []
     for node_id, attrs in user_kg.nodes(data=True):
         if node_id == "__misconceptions__":
             continue
-        checklist_result = attrs.get("checklist_result", [])
-        total_count = len(attrs.get("checklist", []))
-        met_count = sum(1 for item in checklist_result if item.get("met"))
-        # checklist_result는 {item, met}만 노출 (source_quote가 들어와도 제거)
-        sanitized_result = [
-            {"item": item.get("item", ""), "met": bool(item.get("met"))}
-            for item in checklist_result
+
+        original_checklist = attrs.get("checklist", [])
+        evaluator_result   = attrs.get("checklist_result", [])
+
+        met_by_item = {
+            r.get("item"): bool(r.get("met"))
+            for r in evaluator_result
+        }
+
+        merged = [
+            {
+                "item": ck.get("item", ""),
+                "met":  met_by_item.get(ck.get("item", ""), False),
+            }
+            for ck in original_checklist
         ]
+
         view.append({
-            "id": node_id,
-            "status": attrs.get("status", NodeStatus.MISSING),
-            "met_count": met_count,
-            "total_count": total_count,
+            "id":               node_id,
+            "status":           attrs.get("status", NodeStatus.MISSING),
+            "checklist":        merged,
+            "met_count":        sum(1 for ck in merged if ck["met"]),
+            "total_count":      len(merged),
             "completion_ratio": float(attrs.get("completion_ratio", 0.0)),
-            "checklist_result": sanitized_result,
         })
     return view
 
@@ -417,22 +426,41 @@ def strip_checklist_for_reference_view(kg_dict: dict) -> dict:
 
 def strip_checklist_for_user_view(kg_dict: dict) -> dict:
     """
-    User KG dict를 사용자 노출용으로 가공한다.
+    User KG dict를 사용자 노출용으로 가공한다 (세션 종료 후 노출).
 
-    제거    : Reference에서 복사된 원본 checklist (item + source_quote)
-    노출    : checklist_result.{item, met} (source_quote는 떨어뜨림)
-    추가    : met_count / total_count 정량 카운트
+    각 노드의 체크리스트 전체 항목 + 평가 결과(met/unmet)를 함께 노출한다.
+    프론트에서 "어느 항목을 잘 설명했고, 어느 항목이 남았는지"를
+    시각화할 수 있도록 한다.
+
+    제거 : source_quote (학습자료 원문 인용 — 정답 누출 방지)
+    노출 : checklist[*].{item, met}  ← Reference 원본 항목 + 평가 결과 머지
+    추가 : met_count / total_count
     """
     safe_nodes = []
     for node in kg_dict.get("nodes", []):
-        safe = {k: v for k, v in node.items() if k != "checklist"}
-        checklist_result = node.get("checklist_result", [])
-        sanitized_result = [
-            {"item": item.get("item", ""), "met": bool(item.get("met"))}
-            for item in checklist_result
+        original_checklist = node.get("checklist", [])          # [{item, source_quote}, ...]
+        evaluator_result   = node.get("checklist_result", [])   # [{item, met}, ...]
+
+        met_by_item = {
+            r.get("item"): bool(r.get("met"))
+            for r in evaluator_result
+        }
+
+        merged = [
+            {
+                "item": ck.get("item", ""),
+                "met":  met_by_item.get(ck.get("item", ""), False),
+            }
+            for ck in original_checklist
         ]
-        safe["checklist_result"] = sanitized_result
-        safe["met_count"] = sum(1 for item in sanitized_result if item["met"])
-        safe["total_count"] = len(node.get("checklist", []))
+
+        safe = {
+            k: v for k, v in node.items()
+            if k not in {"checklist", "checklist_result"}
+        }
+        safe["checklist"]   = merged
+        safe["met_count"]   = sum(1 for ck in merged if ck["met"])
+        safe["total_count"] = len(merged)
         safe_nodes.append(safe)
+
     return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
