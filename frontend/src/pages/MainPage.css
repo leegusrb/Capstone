@@ -1,0 +1,120 @@
+.main-page { display: flex; flex-direction: column; gap: 56px; }
+
+/* Hero */
+.hero-section {
+  display: grid; grid-template-columns: 1fr 360px;
+  gap: 48px; align-items: center;
+  padding: 24px 0 8px;
+}
+.hero-badge { margin-bottom: 16px; }
+.hero-title {
+  font-size: 44px; font-weight: 900; line-height: 1.15;
+  color: #0f172a; letter-spacing: -0.03em; margin-bottom: 18px;
+}
+.hero-highlight {
+  background: linear-gradient(135deg, #4f6ef7, #8b5cf6);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-desc {
+  font-size: 15px; color: #64748b; line-height: 1.75; margin-bottom: 28px;
+}
+.hero-actions { display: flex; gap: 12px; }
+
+/* Hero visual */
+.hero-visual { display: flex; justify-content: center; }
+.kg-preview-card {
+  background: #fff; border: 1px solid #e2e8f0;
+  border-radius: 20px; padding: 24px 28px;
+  box-shadow: 0 8px 32px rgba(79,110,247,0.12);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.kg-preview-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; }
+.kg-legend-row { display: flex; gap: 12px; }
+.kleg { font-size: 11px; font-weight: 600; }
+.kleg.green { color: #10b981; }
+.kleg.yellow { color: #f59e0b; }
+.kleg.gray { color: #94a3b8; }
+
+/* How it works */
+.how-section {}
+.flow-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.flow-step {
+  text-align: center; padding: 24px 16px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: var(--radius-lg);
+  position: relative; box-shadow: var(--shadow-sm);
+  transition: all 0.2s;
+}
+.flow-step:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.flow-num {
+  position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #4f6ef7; color: #fff; font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.flow-icon { font-size: 28px; margin-bottom: 8px; }
+.flow-title { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 5px; }
+.flow-desc { font-size: 12px; color: #64748b; line-height: 1.5; }
+.flow-arrow {
+  font-size: 22px; color: #cbd5e1; flex-shrink: 0;
+  padding: 0 4px; margin: 0 -6px; z-index: 1;
+}
+
+/* Concept section */
+.concept-card {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 40px; align-items: center;
+}
+.concept-title { font-size: 24px; font-weight: 800; color: #0f172a; margin-bottom: 12px; }
+.concept-desc { font-size: 14px; color: #475569; line-height: 1.8; margin-bottom: 20px; }
+.concept-desc strong { color: #0f172a; }
+.concept-desc em { color: #4f6ef7; font-style: normal; font-weight: 600; }
+.tech-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.tech-badge {
+  padding: 4px 10px; border-radius: 999px;
+  background: #f0f4ff; color: #4f6ef7;
+  border: 1px solid #c7d2fe; font-size: 12px; font-weight: 600;
+}
+
+/* Agent diagram */
+.agent-diagram {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; min-width: 160px;
+}
+.agent-box {
+  width: 140px; padding: 14px 10px; border-radius: var(--radius-md);
+  text-align: center; border: 1.5px solid;
+}
+.student-agent { background: #eef2ff; border-color: #c7d2fe; }
+.user-agent { background: #ecfdf5; border-color: #a7f3d0; }
+.evaluator-agent { background: #faf5ff; border-color: #ddd6fe; }
+.agent-icon { font-size: 24px; margin-bottom: 4px; }
+.agent-name { font-size: 13px; font-weight: 700; color: #0f172a; }
+.agent-role { font-size: 11px; color: #64748b; margin-top: 2px; }
+.agent-arrows {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 4px 0;
+}
+.bi-arrow {
+  width: 2px; height: 24px; background: #c7d2fe;
+}
+.arrow-label { font-size: 11px; font-weight: 600; color: #4f6ef7; }
+.evaluator-line { width: 2px; height: 12px; background: #e2e8f0; border-left: 2px dashed #e2e8f0; }
+
+/* CTA */
+.cta-card {
+  background: linear-gradient(135deg, #4f6ef7 0%, #8b5cf6 100%);
+  border: none; text-align: center; padding: 48px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.cta-card h2 { font-size: 24px; font-weight: 800; color: #fff; }
+.cta-card p { font-size: 15px; color: rgba(255,255,255,0.8); margin-bottom: 8px; }
+.cta-card .btn-primary {
+  background: #fff; color: #4f6ef7;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+}
+.cta-card .btn-primary:hover { background: #f0f4ff; }
