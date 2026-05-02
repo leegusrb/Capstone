@@ -10,6 +10,8 @@ from app.services.kg_service import (
     get_kg_coverage,
     get_missing_nodes,
     get_student_context,
+    strip_checklist_for_reference_view,
+    strip_checklist_for_user_view,
 )
 from fastapi import HTTPException
 
@@ -69,10 +71,13 @@ def get_knowledge_graph(
     reference_kg = deserialize_kg(kg_record.reference_kg or {"nodes": [], "edges": []})
     user_kg      = deserialize_kg(kg_record.user_kg      or {"nodes": [], "edges": []})
 
+    # Reference KG: 정답 기준이므로 체크리스트 일체 제거.
+    # User KG: 세션 종료 후 사용자가 어떤 항목을 빠뜨렸는지 확인할 수 있도록
+    #          checklist_result(item + met/unmet)는 노출, source_quote는 제거.
     return {
         "document_id":    document_id,
-        "reference_kg":   kg_record.reference_kg,
-        "user_kg":        kg_record.user_kg,
+        "reference_kg":   strip_checklist_for_reference_view(kg_record.reference_kg or {"nodes": [], "edges": []}),
+        "user_kg":        strip_checklist_for_user_view(kg_record.user_kg or {"nodes": [], "edges": []}),
         "coverage":       get_kg_coverage(user_kg, reference_kg),
         "missing_nodes":  get_missing_nodes(user_kg),
         "student_context": get_student_context(user_kg),
@@ -84,11 +89,11 @@ def get_reference_kg(
     document_id: int,
     db: Session = Depends(get_db),
 ):
-    """Reference KG만 반환한다."""
+    """Reference KG만 반환한다 (정답 기준 노출 방지를 위해 체크리스트 제거)."""
     kg_record = _get_kg_or_404(db, document_id)
     return {
         "document_id":  document_id,
-        "reference_kg": kg_record.reference_kg,
+        "reference_kg": strip_checklist_for_reference_view(kg_record.reference_kg or {"nodes": [], "edges": []}),
     }
 
 
@@ -99,7 +104,11 @@ def get_user_kg(
 ):
     """
     User KG와 학습 진행 현황을 반환한다.
-    세션 종료 화면 또는 프론트엔드 KG 시각화에서 사용.
+    세션 종료 후 사용자에게 학습 결과를 보여줄 때 사용한다.
+
+    각 노드는 항목별 met/unmet 결과(checklist_result)를 포함하므로,
+    사용자가 자신이 빠뜨린 부분을 직접 확인할 수 있다.
+    source_quote(학습자료 원문 인용)는 제외된다.
     """
     kg_record = _get_kg_or_404(db, document_id)
 
@@ -108,7 +117,7 @@ def get_user_kg(
 
     return {
         "document_id":  document_id,
-        "user_kg":      kg_record.user_kg,
+        "user_kg":      strip_checklist_for_user_view(kg_record.user_kg or {"nodes": [], "edges": []}),
         "coverage":     get_kg_coverage(user_kg, reference_kg),
         "missing_nodes": get_missing_nodes(user_kg),
     }
