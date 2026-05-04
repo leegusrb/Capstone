@@ -48,7 +48,6 @@ class TurnResult:
     """process_turn()의 반환값."""
     scores:         dict
     total:          int
-    weak_areas:     list[str]
     misconceptions: list[dict]
 
     next_question: Optional[str] = None
@@ -129,9 +128,7 @@ def start_session(
     student_resp = generate_student_question(
         topic=topic,
         student_context=student_context,
-        conversation_history=[],   # 첫 턴이므로 대화 없음
-        evaluator_feedback="",
-        weak_areas=[],
+        conversation_history=[],
         model=model,
     )
 
@@ -207,6 +204,8 @@ def process_turn(
             user_kg=user_kg,
             reference_kg=reference_kg,
             termination_reason=eval_result.termination_reason or "score",
+            topic=topic,
+            model=model,
         )
         closing = generate_session_closing_message(
             topic=topic,
@@ -222,7 +221,6 @@ def process_turn(
         return TurnResult(
             scores=eval_result.scores.to_dict(),
             total=eval_result.total,
-            weak_areas=eval_result.weak_areas,
             misconceptions=eval_result.misconceptions,
             is_session_done=True,
             termination_reason=eval_result.termination_reason,
@@ -240,9 +238,6 @@ def process_turn(
         topic=topic,
         student_context=student_context,
         conversation_history=conversation_history,
-        evaluator_feedback=eval_result.feedback_summary,
-        weak_areas=eval_result.weak_areas,
-        missing_nodes=missing_nodes,
         model=model,
     )
 
@@ -254,7 +249,6 @@ def process_turn(
     return TurnResult(
         scores=eval_result.scores.to_dict(),
         total=eval_result.total,
-        weak_areas=eval_result.weak_areas,
         misconceptions=eval_result.misconceptions,
         next_question=next_student.question,
         next_intent=next_student.intent,
@@ -291,6 +285,8 @@ def end_session_early(
         user_kg=user_kg,
         reference_kg=reference_kg,
         termination_reason="user",
+        topic=topic,
+        model=model,
     )
     closing = generate_session_closing_message(
         topic=topic,
@@ -304,7 +300,6 @@ def end_session_early(
     return TurnResult(
         scores=empty_scores,
         total=0,
-        weak_areas=[],
         misconceptions=[],
         is_session_done=True,
         termination_reason="user",
