@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.database import init_db
 from app.api.v1 import documents, knowledge_graphs, sessions
 
@@ -22,6 +23,9 @@ app.include_router(documents.router,        prefix="/api/v1")
 app.include_router(knowledge_graphs.router, prefix="/api/v1")
 app.include_router(sessions.router,         prefix="/api/v1")
 
+if settings.debug_mode:
+    from app.api.v1.debug_kg import router as debug_router
+    app.include_router(debug_router, prefix="/api/v1")
 
 @app.on_event("startup")
 def on_startup():

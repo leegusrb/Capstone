@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     #                            변경 전: 50 (10%) → 변경 후: 100 (20%)
     #                            overlap이 너무 작으면 청크 경계에서 문맥이 단절됨
 
+    debug_mode: bool = False
+
     class Config:
         env_file = ".env"
 
