@@ -25,7 +25,7 @@ export default function Navbar() {
                 <line x1="9" y1="20" x2="17" y2="20" stroke="#c7d2fe" strokeWidth="1.8"/>
               </svg>
             </div>
-            <span className="logo-text">KG-Tutor</span>
+            <span className="logo-text">Tu:gather</span>
           </div>
 
           {/* Spacer */}

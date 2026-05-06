@@ -10,16 +10,16 @@ const STEPS = [
 ];
 
 const KG_NODES = [
-  { id: 'ip',         label: 'IP',        x: 230, y: 55,  status: 'confirmed' },
-  { id: 'tcp',        label: 'TCP',       x: 110, y: 140, status: 'confirmed' },
-  { id: 'udp',        label: 'UDP',       x: 350, y: 140, status: 'confirmed' },
-  { id: 'http',       label: 'HTTP',      x: 55,  y: 240, status: 'confirmed' },
-  { id: 'tls',        label: 'TLS',       x: 170, y: 240, status: 'confirmed' },
-  { id: 'flow',       label: '흐름제어',   x: 95,  y: 330, status: 'confirmed' },
-  { id: 'congestion', label: '혼잡제어',   x: 220, y: 330, status: 'confirmed' },
-  { id: 'ack',        label: 'ACK',       x: 340, y: 240, status: 'confirmed' },
-  { id: 'handshake',  label: '3-way HS',  x: 420, y: 140, status: 'confirmed' },
-  { id: 'dns',        label: 'DNS',       x: 440, y: 280, status: 'confirmed' },
+  { id: 'ip',         label: 'IP',        x: 230, y: 55,  status: 'active' },
+  { id: 'tcp',        label: 'TCP',       x: 110, y: 140, status: 'active' },
+  { id: 'udp',        label: 'UDP',       x: 350, y: 140, status: 'active' },
+  { id: 'http',       label: 'HTTP',      x: 55,  y: 240, status: 'active' },
+  { id: 'tls',        label: 'TLS',       x: 170, y: 240, status: 'active' },
+  { id: 'flow',       label: '흐름제어',   x: 95,  y: 330, status: 'active' },
+  { id: 'congestion', label: '혼잡제어',   x: 220, y: 330, status: 'active' },
+  { id: 'ack',        label: 'ACK',       x: 340, y: 240, status: 'active' },
+  { id: 'handshake',  label: '3-way HS',  x: 420, y: 140, status: 'active' },
+  { id: 'dns',        label: 'DNS',       x: 440, y: 280, status: 'active' },
 ];
 const KG_EDGES = [
   { from:'ip',to:'tcp' },{ from:'ip',to:'udp' },
@@ -144,8 +144,7 @@ export default function UploadAnalysis() {
                   </p>
                 </div>
                 <div style={{ display:'flex', gap:6 }}>
-                  <span className="tag tag-green">● Confirmed</span>
-                  <span className="tag tag-gray">● Missing</span>
+                  <span className="tag tag-blue">● 추출된 개념</span>
                 </div>
               </div>
               <div className="kg-bg">

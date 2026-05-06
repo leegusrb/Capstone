@@ -5,15 +5,17 @@ const STATUS_COLOR = {
   partial: '#f59e0b',
   missing: '#cbd5e1',
   active: '#4f6ef7',
+  misconception: '#ef4444',
 };
 const STATUS_STROKE = {
   confirmed: '#059669',
   partial: '#d97706',
   missing: '#94a3b8',
   active: '#3451d1',
+  misconception: '#dc2626',
 };
 
-export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340 }) {
+export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);
   if (!nodes || !edges) return null;
 
@@ -53,24 +55,31 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
         const color = STATUS_COLOR[n.status] || STATUS_COLOR.missing;
         const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
         const isHov = hovered === n.id;
+        const isSel = selectedNodeId === n.id;
         const r = 14;
         return (
           <g key={n.id} transform={`translate(${n.x},${n.y})`}
             onMouseEnter={() => setHovered(n.id)}
             onMouseLeave={() => setHovered(null)}
-            style={{ cursor: 'pointer' }}>
+            onClick={() => onNodeClick && onNodeClick(n)}
+            style={{ cursor: onNodeClick ? 'pointer' : 'default' }}>
+            {isSel && (
+              <circle r={r + 11} fill="none"
+                stroke="#4f6ef7" strokeWidth={2} strokeDasharray="4 3" opacity={0.8}
+                style={{ transition: 'all 0.2s ease' }}/>
+            )}
             {n.status !== 'missing' && (
               <circle r={r + 7} fill={color} opacity={isHov ? 0.18 : 0.1}
                 style={{ transition: 'opacity 0.2s' }}/>
             )}
-            <circle r={r} fill={color} stroke={stroke} strokeWidth={isHov ? 2.5 : 1.5}
+            <circle r={r} fill={color} stroke={stroke} strokeWidth={isHov || isSel ? 2.5 : 1.5}
               filter={n.status !== 'missing' ? `url(#g${n.id})` : ''}
               style={{ transition: 'all 0.3s ease' }}
             />
             <text y={r + 14} textAnchor="middle"
               fill={n.status === 'missing' ? '#94a3b8' : '#0f172a'}
               fontSize={10} fontFamily="Inter,sans-serif"
-              fontWeight={isHov ? 700 : 500}
+              fontWeight={isHov || isSel ? 700 : 500}
             >
               {n.label}
             </text>
