@@ -51,7 +51,6 @@ class TurnResult:
     misconceptions: list[dict]
 
     next_question: Optional[str] = None
-    next_intent:   Optional[str] = None
 
     is_session_done:    bool          = False
     termination_reason: Optional[str] = None  # "score"|"repetition"|"turn_limit"|"user"
@@ -61,13 +60,14 @@ class TurnResult:
 
     coverage:      Optional[dict]      = None
     missing_nodes: Optional[list[str]] = None
+    evaluator_kg_updates: Optional[list[dict]] = None  # Evaluator가 반환한 raw 노드 상태
+    student_context: Optional[dict] = None  # Student LLM에 전달된 컨텍스트 (디버그용)
 
 
 @dataclass
 class StartSessionResult:
     """start_session()의 반환값."""
     first_question: str
-    intent:         str
 
 
 # ── RAG 검색 ──────────────────────────────────────────────
@@ -107,22 +107,11 @@ def start_session(
     db: DBSession,
     model: str = "gpt-4o-mini",
 ) -> StartSessionResult:
-    """
-    세션을 시작하고 Student LLM의 첫 질문을 반환한다.
-
-    Args:
-        topic       : 사용자가 입력한 학습 주제
-        document_id : 업로드된 PDF의 Document ID
-        db          : DB 세션
-        model       : LLM 모델명
-    """
     kgs = load_kg_from_db(db, document_id)
     if not kgs:
         raise ValueError(f"Document {document_id}의 KG가 존재하지 않습니다. 먼저 PDF를 업로드하세요.")
 
     _, user_kg = kgs
-
-    # 현재 User KG에서 confirmed/partial 노드만 추출 (missing 제외)
     student_context = get_student_context(user_kg)
 
     student_resp = generate_student_question(
@@ -133,13 +122,12 @@ def start_session(
     )
 
     logger.info(
-        "세션 시작 — document_id: %d | 주제: %s | 첫 질문 intent: %s",
-        document_id, topic, student_resp.intent,
+        "세션 시작 — document_id: %d | 주제: %s",
+        document_id, topic,
     )
 
     return StartSessionResult(
         first_question=student_resp.question,
-        intent=student_resp.intent,
     )
 
 
@@ -153,19 +141,6 @@ def process_turn(
     db: DBSession,
     model: str = "gpt-4o-mini",
 ) -> TurnResult:
-    """
-    사용자 설명 1턴을 처리한다.
-
-    Args:
-        topic                : 학습 주제
-        document_id          : 업로드된 PDF의 Document ID
-        user_explanation     : 이번 턴 사용자 설명 텍스트
-        conversation_history : 이번 세션의 전체 대화 기록
-        session_history      : 이전 턴의 scores dict 리스트 (반복 한계 판단용)
-        turn_count           : 현재 턴 번호 (1-indexed)
-        db                   : DB 세션
-        model                : LLM 모델명
-    """
     # ── 1. 실제 KG 로드 ──
     kgs = load_kg_from_db(db, document_id)
     if not kgs:
@@ -196,7 +171,7 @@ def process_turn(
     coverage      = get_kg_coverage(user_kg, reference_kg)
     missing_nodes = get_missing_nodes(user_kg)
 
-    # ── 5. 세션 종료 분기 (is_sufficient 사용) ──
+    # ── 5. 세션 종료 분기 ──
     if eval_result.is_sufficient:
         updated_history = session_history + [eval_result.scores.to_dict()]
         summary = build_session_summary(
@@ -204,8 +179,6 @@ def process_turn(
             user_kg=user_kg,
             reference_kg=reference_kg,
             termination_reason=eval_result.termination_reason or "score",
-            topic=topic,
-            model=model,
         )
         closing = generate_session_closing_message(
             topic=topic,
@@ -230,8 +203,7 @@ def process_turn(
             missing_nodes=missing_nodes,
         )
 
-    # ── 6. 다음 질문 생성 (세션 계속) ──
-    # confirmed/partial 노드만 포함된 컨텍스트 추출 (missing 차단)
+    # ── 6. 다음 질문 생성 ──
     student_context = get_student_context(user_kg)
 
     next_student: StudentResponse = generate_student_question(
@@ -242,8 +214,8 @@ def process_turn(
     )
 
     logger.info(
-        "턴 %d 완료 — 총점: %d | 다음 intent: %s",
-        turn_count, eval_result.total, next_student.intent,
+        "턴 %d 완료 — 총점: %d",
+        turn_count, eval_result.total,
     )
 
     return TurnResult(
@@ -251,10 +223,11 @@ def process_turn(
         total=eval_result.total,
         misconceptions=eval_result.misconceptions,
         next_question=next_student.question,
-        next_intent=next_student.intent,
         is_session_done=False,
         coverage=coverage,
         missing_nodes=missing_nodes,
+        evaluator_kg_updates=eval_result.updated_user_kg.get("nodes", []),
+        student_context=student_context,
     )
 
 
@@ -265,16 +238,6 @@ def end_session_early(
     db: DBSession,
     model: str = "gpt-4o-mini",
 ) -> TurnResult:
-    """
-    사용자가 직접 세션을 종료할 때 호출한다.
-
-    Args:
-        topic           : 학습 주제
-        document_id     : 업로드된 PDF의 Document ID
-        session_history : 지금까지의 점수 기록
-        db              : DB 세션
-        model           : LLM 모델명
-    """
     kgs = load_kg_from_db(db, document_id)
     if not kgs:
         raise ValueError(f"Document {document_id}의 KG가 존재하지 않습니다.")
@@ -285,8 +248,6 @@ def end_session_early(
         user_kg=user_kg,
         reference_kg=reference_kg,
         termination_reason="user",
-        topic=topic,
-        model=model,
     )
     closing = generate_session_closing_message(
         topic=topic,

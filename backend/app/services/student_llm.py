@@ -14,7 +14,6 @@ Core design principles:
   - Topic is taken directly from the document uploaded by the learner and the value entered at session start
 """
 
-import json
 import logging
 from dataclasses import dataclass
 
@@ -32,7 +31,6 @@ _openai_client = OpenAI(api_key=settings.openai_api_key)
 @dataclass
 class StudentResponse:
     question: str
-    intent: str  # ice_breaker | clarify_partial | probe_depth | request_example | check_relation
 
 
 # ── Prompts ───────────────────────────────────────────────
@@ -47,48 +45,23 @@ STUDENT_SYSTEM_PROMPT = """\
 - 교재, 참고 자료, 외부 지식에는 접근할 수 없습니다.
 - 선생님이 명시적으로 말하지 않은 내용은 절대로 추론하거나 가정하거나 채워 넣지 마세요.
 
-===대화 단계===
-질문하기 전에, 지금까지 선생님이 말한 내용을 바탕으로 현재 단계를 판단하세요:
-
-Phase 1 — 선생님이 주제를 소개했지만, 핵심 개념에 대한 설명은 아직 없는 상태입니다.
-           → 선생님에게 주제의 본질적인 내용을 설명해 달라고 요청하세요.
-
-Phase 2 — 선생님이 핵심 개념에 대해 어느 정도 설명했지만,
-           설명이 불완전하거나 불명확하거나 중요한 세부 사항이 빠져 있는 상태입니다.
-           → 가장 핵심적으로 부족하거나 불명확한 부분에 대해 질문하세요.
-           → "가장 핵심적"이란, 이것 없이는 설명 자체를 이해할 수 없는 내용을 의미합니다.
-
-Phase 3 — 선생님이 핵심 개념을 명확하게 설명했지만, 구체적인 예시나 사례는 아직 없는 상태입니다.
-           → 더 잘 이해할 수 있도록 구체적인 예시나 사례를 요청하세요.
-     
 ===질문 규칙===
-1. 질문은 반드시 정확히 하나의 개념이나 용어만 대상으로 해야 합니다. 여러 개를 묶어서 질문하지 마세요.
-   - 선생님이 여러 항목(예: A, B, C, D)을 언급했다면, 첫 번째 항목만 골라서 질문하세요.
-   - "각각", "모두", "전부" 등의 표현으로 여러 항목을 하나의 질문에 묶지 마세요.
-   - 나쁜 예: "사과, 딸기, 포도, 오렌지는 각각 무슨 색인가요?"
-   - 좋은 예: "사과는 무슨 색인가요?"
-2. 응답당 질문은 반드시 하나만 하세요. 최대 1~2문장으로 제한합니다.
-3. 설명을 칭찬하지 마세요.
+1. 질문은 반드시 정확히 하나의 개념이나 용어만 대상으로 해야 합니다.
+   "각각", "모두", "전부", "조합", "전반적으로" 등의 표현으로 여러 항목을 묶지 마세요.
+   [예시]
+    나쁜 예: "사과, 딸기, 포도는 각각 무슨 색인가요?"
+    좋은 예: "사과는 무슨 색인가요?"
+2. 응답당 질문은 하나만, 최대 1~2문장으로 제한합니다.
+3. 칭찬하지 마세요.
 4. 한국어로 답변하세요.
-5. confirmed 개념에 대해서는 이해했다고 간략히 표현해도 됩니다. (예: "그 부분은 이해했어요.")
-6. partial 개념에 대해서는 추가 설명을 요청하세요. (예: "그 부분을 좀 더 설명해 주실 수 있나요?")
-7. 아직 설명되지 않은 개념을 직접 언급하지 마세요.
-8. 친근하고 자연스러운 어조로 작성하세요.
+5. confirmed 개념은 이미 이해한 것으로 간주하며 다시 묻지 마세요.
+6. 아직 설명되지 않은 개념(confirmed, partial 노드 외 개념)을 직접 언급하지 마세요.
+7. 친근하고 자연스러운 어조로 작성하세요.
 
-
-===질문 의도 유형===
-- ice_breaker     : 세션 시작 시 첫 번째 질문
-- clarify_partial : partial 개념에 대해 추가 설명 요청
-- probe_depth     : confirmed 개념의 원리나 이유 탐구
-- request_example : 구체적인 예시나 실제 적용 사례 요청
-- check_relation  : 두 개념 간의 관계 명확화
-
-반드시 아래 JSON 형식으로만 응답하세요:
-{
-  "question": "질문 내용",
-  "intent": "의도 태그"
-}
+질문 텍스트만 출력하세요. 
 """
+
+
 
 _STUDENT_FIRST_TURN_TEMPLATE = """\
 === 학습 주제 ===
@@ -98,8 +71,9 @@ _STUDENT_FIRST_TURN_TEMPLATE = """\
 세션이 방금 시작되었습니다.
 아직 선생님으로부터 아무런 설명도 듣지 못했습니다.
 선생님에게 {topic}에 대해 처음부터 설명해 달라고 요청하는 첫 번째 질문을 생성하세요.
-주제 이름을 직접 언급하고, "오늘은 어떤 내용에 대해 배우나요?" 수준의 열린 질문으로 작성하세요.
 """
+
+
 
 _STUDENT_FOLLOWUP_TEMPLATE = """\
 === 학습 주제 ===
@@ -115,13 +89,13 @@ _STUDENT_FOLLOWUP_TEMPLATE = """\
 {conversation_snippet}
 
 === 질문 생성 지침 ===
-- partial 개념이 있다면 해당 개념에 대한 추가 설명을 우선 요청하세요.
-- partial 개념이 없다면 아래 순서로 질문하세요:
-  1순위 — 선생님이 암시했지만 실제로 설명하지 않은 핵심 내용
-  2순위 — 언급은 했지만 이유를 설명하지 않은 인과관계
-  3순위 — confirmed 개념 중 하나를 더 깊이 탐구
+- 최근 대화에서 선생님이 마지막으로 말한 내용을 참고하세요.
+- 아래 우선순위에 질문 방향을 결정하세요:
+  1순위 — partial 개념이 있다면, 해당 개념에 대해 불명확한 부분을 더 자세히 질문
+  2순위 — 설명된 개념 중 이유나 방식이 빠진 부분이 있다면 해당 부분 질문
+  3순위 — 설명된 개념에 예시가 없다면 실제 사례 요청
+  4순위 — 여러 confirmed 개념이 있고 관계가 설명되지 않았다면 관계 질문
 - 이전에 했던 질문과 동일하거나 유사한 질문은 반복하지 마세요.
-- 질문은 정확히 하나만 생성하세요.
 """
 
 
@@ -136,7 +110,7 @@ def _format_edges(edges: list[dict]) -> str:
     )
 
 
-def _format_conversation(history: list[dict], last_n: int = 6) -> str:
+def _format_conversation(history: list[dict], last_n: int = 10) -> str:
     """Include only the last N messages to save tokens."""
     recent = history[-last_n:] if len(history) > last_n else history
     if not recent:
@@ -146,21 +120,6 @@ def _format_conversation(history: list[dict], last_n: int = 6) -> str:
         role = "선생님 (사용자)" if msg["role"] == "user" else "나 (학생)"
         lines.append(f"{role}: {msg['content']}")
     return "\n".join(lines)
-
-
-def _parse_student_json(raw: str) -> dict:
-    text = raw.strip()
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
-    try:
-        return json.loads(text)
-    except Exception as e:
-        logger.warning("Student JSON parsing failed, using full text as question: %s", e)
-        return {"question": raw.strip(), "intent": "probe_depth"}
 
 
 # ── Main function ─────────────────────────────────────────
@@ -207,6 +166,11 @@ def generate_student_question(
         len(student_context.get("partial_nodes", [])),
     )
 
+    print("\n" + "="*60)
+    print("[Student] USER PROMPT →")
+    print(user_prompt)
+    print("="*60 + "\n")
+
     response = _openai_client.chat.completions.create(
         model=model,
         messages=[
@@ -214,18 +178,17 @@ def generate_student_question(
             {"role": "user",   "content": user_prompt},
         ],
         temperature=0.6,
-        response_format={"type": "json_object"},
     )
 
-    data = _parse_student_json(response.choices[0].message.content)
+    question = response.choices[0].message.content.strip()
 
-    result = StudentResponse(
-        question=data.get("question", ""),
-        intent=data.get("intent", "probe_depth"),
-    )
+    print("\n" + "="*60)
+    print("[Student] RAW RESPONSE →")
+    print(question)
+    print("="*60 + "\n")
 
-    logger.info("Student question — intent: %s | %s", result.intent, result.question[:80])
-    return result
+    logger.info("Student question — %s", question[:80])
+    return StudentResponse(question=question)
 
 
 def generate_session_closing_message(

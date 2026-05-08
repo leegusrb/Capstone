@@ -258,12 +258,7 @@ def update_user_kg_from_evaluator(
             user_kg.nodes[node_id]["status"] = status
             user_kg.nodes[node_id]["checklist_result"] = checklist_result
             user_kg.nodes[node_id]["completion_ratio"] = completion_ratio
-        else:
-            # Reference KG에 없는 노드는 평가 범위 밖이므로 무시 (PDF §12-4).
-            logger.debug(
-                "Evaluator가 Reference KG 외 노드 반환: %s — User KG 미반영",
-                node_id,
-            )
+            logger.info("KG 업데이트 성공: '%s' → %s", node_id, status)
             continue
 
     for edge in updated.get("edges", []):
