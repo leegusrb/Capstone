@@ -37,5 +37,5 @@ def init_db():
         conn.commit()
 
     # Base에 등록된 모든 모델 테이블 생성
-    from app.models import document, chunk  # noqa: F401 — 임포트로 모델 등록
+    from app.models import document, chunk, session_record  # noqa: F401 — 임포트로 모델 등록
     Base.metadata.create_all(bind=engine)

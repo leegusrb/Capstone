@@ -36,3 +36,10 @@ class Document(Base):
         cascade="all, delete-orphan",
         uselist=False,   # 1:1 관계이므로 리스트 아님
     )
+
+    # SessionRecord 관계 (Document 삭제 시 세션 이력도 함께 삭제)
+    session_records = relationship(
+        "SessionRecord",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )

@@ -19,6 +19,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session as DBSession
 
+from app.models.session_record import SessionRecord
 from app.services.kg_service import (
     get_kg_coverage,
     get_missing_nodes,
@@ -191,6 +192,17 @@ def process_turn(
             eval_result.termination_reason,
             coverage.get("coverage_percent", 0),
         )
+        _save_session_record(
+            db=db,
+            document_id=document_id,
+            topic=topic,
+            total_score=eval_result.total,
+            turn_count=turn_count,
+            termination_reason=eval_result.termination_reason or "score",
+            coverage_percent=coverage.get("coverage_percent", 0.0),
+            misconceptions=[m.get("description", str(m)) for m in eval_result.misconceptions],
+            session_summary=summary,
+        )
         return TurnResult(
             scores=eval_result.scores.to_dict(),
             total=eval_result.total,
@@ -231,6 +243,31 @@ def process_turn(
     )
 
 
+def _save_session_record(
+    db: DBSession,
+    document_id: int,
+    topic: str,
+    total_score: int,
+    turn_count: int,
+    termination_reason: str,
+    coverage_percent: float,
+    misconceptions: list,
+    session_summary: dict,
+) -> None:
+    record = SessionRecord(
+        document_id=document_id,
+        topic=topic,
+        total_score=total_score,
+        turn_count=turn_count,
+        termination_reason=termination_reason,
+        coverage_percent=coverage_percent,
+        misconceptions=misconceptions,
+        session_summary=session_summary,
+    )
+    db.add(record)
+    db.commit()
+
+
 def end_session_early(
     topic: str,
     document_id: int,
@@ -257,6 +294,23 @@ def end_session_early(
     )
 
     empty_scores = {"concept": 0, "accuracy": 0, "logic": 0, "specificity": 0}
+    coverage = get_kg_coverage(user_kg, reference_kg)
+
+    avg_total = 0
+    if session_history:
+        avg_total = round(sum(sum(t.values()) for t in session_history) / len(session_history))
+
+    _save_session_record(
+        db=db,
+        document_id=document_id,
+        topic=topic,
+        total_score=avg_total,
+        turn_count=len(session_history),
+        termination_reason="user",
+        coverage_percent=coverage.get("coverage_percent", 0.0),
+        misconceptions=[],
+        session_summary=summary,
+    )
 
     return TurnResult(
         scores=empty_scores,
@@ -266,6 +320,6 @@ def end_session_early(
         termination_reason="user",
         session_summary=summary,
         closing_message=closing,
-        coverage=get_kg_coverage(user_kg, reference_kg),
+        coverage=coverage,
         missing_nodes=get_missing_nodes(user_kg),
     )

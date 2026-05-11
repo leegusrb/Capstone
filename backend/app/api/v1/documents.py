@@ -1,11 +1,15 @@
 import os
+from datetime import datetime
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.exceptions import InvalidFileTypeError, FileTooLargeError, DocumentNotFoundError
 from app.models.document import Document
+from app.models.session_record import SessionRecord
 from app.schemas.document import DocumentUploadResponse, DocumentStatusResponse
 from app.services.pdf_service import save_uploaded_file, extract_and_chunk_pdf
 from app.services.embedding_service import embed_and_save_chunks
@@ -18,6 +22,22 @@ from app.services.reference_kg_generator import generate_reference_kg
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20MB
+
+
+@router.get("", response_model=List[DocumentStatusResponse])
+def list_documents(db: Session = Depends(get_db)):
+    """업로드된 문서 목록을 최신순으로 반환한다."""
+    documents = db.query(Document).order_by(Document.created_at.desc()).all()
+    return [
+        DocumentStatusResponse(
+            id=doc.id,
+            filename=doc.filename,
+            status=doc.status,
+            chunk_count=len(doc.chunks) if doc.chunks else 0,
+            created_at=doc.created_at,
+        )
+        for doc in documents
+    ]
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)
@@ -119,3 +139,35 @@ def get_document_status(
         chunk_count=chunk_count,
         created_at=document.created_at,
     )
+
+
+class SessionRecordResponse(BaseModel):
+    id: int
+    topic: str
+    total_score: int
+    turn_count: int
+    termination_reason: Optional[str]
+    coverage_percent: Optional[float]
+    misconceptions: Optional[List[str]]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/{document_id}/sessions", response_model=List[SessionRecordResponse])
+def list_document_sessions(
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    """특정 문서의 세션 이력을 최신순으로 반환한다."""
+    if not db.query(Document).filter(Document.id == document_id).first():
+        raise DocumentNotFoundError(document_id)
+
+    records = (
+        db.query(SessionRecord)
+        .filter(SessionRecord.document_id == document_id)
+        .order_by(SessionRecord.created_at.desc())
+        .all()
+    )
+    return records
