@@ -26,8 +26,12 @@ export default function TeacherMode() {
   const conversationHistory = useRef([]);
   const sessionHistory = useRef([]);
   const chatRef = useRef();
+  const initialized = useRef(false); // 이중 호출 방지
 
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
     if (!document_id) {
       setError('학습 자료를 먼저 업로드해주세요.');
       setLoading(false);

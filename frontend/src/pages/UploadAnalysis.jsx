@@ -23,6 +23,7 @@ export default function UploadAnalysis() {
   const fileRef = useRef();
 
   async function startAnalysis(file) {
+    if (phase !== 'idle') return; // 이중 실행 방지
     setFileName(file.name);
     setPhase('processing');
     setStep(1);
