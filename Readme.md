@@ -236,7 +236,8 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 │   │   ├── api/
 │   │   │   ├── deps.py                     # DB 세션 의존성
 │   │   │   └── v1/
-│   │   │       ├── documents.py            # PDF 업로드 + KG 생성 파이프라인
+│   │   │       ├── auth.py                 # 회원가입·로그인 API
+│   │   │       ├── documents.py            # PDF 업로드 + 문서 목록·세션 이력 조회
 │   │   │       ├── knowledge_graphs.py     # KG 조회 (Reference / User KG)
 │   │   │       ├── sessions.py             # 세션 시작·턴 처리·종료 API
 │   │   │       └── debug_kg.py             # KG 디버깅 엔드포인트 (debug 모드)
@@ -250,14 +251,16 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 │   │   │   ├── reference_kg_generator.py  # Self-Consistency 기반 Reference KG 생성
 │   │   │   ├── evaluator_llm.py           # Evaluator LLM 에이전트
 │   │   │   ├── student_llm.py             # Student LLM 에이전트
-│   │   │   └── session_service.py         # 2-에이전트 세션 오케스트레이터
+│   │   │   └── session_service.py         # 2-에이전트 세션 오케스트레이터 + 세션 자동 저장
 │   │   ├── models/
 │   │   │   ├── document.py                # Document SQLAlchemy 모델
 │   │   │   ├── chunk.py                   # Chunk + pgvector 임베딩 모델
-│   │   │   └── knowledge_graph.py         # KnowledgeGraph 모델 (reference/user KG)
+│   │   │   ├── knowledge_graph.py         # KnowledgeGraph 모델 (reference/user KG)
+│   │   │   ├── session_record.py          # SessionRecord 모델 (세션 이력)
+│   │   │   └── user.py                    # User 모델 (회원가입·로그인)
 │   │   └── schemas/
 │   │       └── document.py                # Pydantic 스키마
-│   ├── alembic/                           # DB 마이그레이션
+│   ├── alembic/                           # DB 마이그레이션 (autogenerate 활성화)
 │   └── tests/
 │       ├── test_pdf_service.py
 │       ├── test_kg_service.py
@@ -266,22 +269,23 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 │   ├── src/
 │   │   ├── App.jsx                        # 라우팅 설정
 │   │   ├── main.jsx
+│   │   ├── api.js                         # 공통 API 유틸리티 + KG 레이아웃 함수
 │   │   ├── context/
-│   │   │   └── AuthContext.jsx            # 인증 상태 관리
+│   │   │   └── AuthContext.jsx            # 인증 상태 관리 (백엔드 연동)
 │   │   ├── components/
 │   │   │   ├── Navbar.jsx                 # 상단 네비게이션
-│   │   │   ├── KnowledgeGraph.jsx         # KG 시각화 컴포넌트
+│   │   │   ├── KnowledgeGraph.jsx         # KG 시각화 (centered subtree 레이아웃)
 │   │   │   ├── DonutChart.jsx             # 커버리지 도넛 차트
 │   │   │   ├── LoginModal.jsx             # 로그인 모달
 │   │   │   └── ...                        # Button, Header, Footer, Main
 │   │   └── pages/
 │   │       ├── MainPage.jsx               # 랜딩 페이지
-│   │       ├── UploadAnalysis.jsx         # PDF 업로드 + KG 생성 진행
-│   │       ├── TeacherMode.jsx            # 페인만 기법 채팅 (학습자 → 설명)
-│   │       ├── StudentMode.jsx            # AI 튜터 채팅 (질문 → 답변)
-│   │       ├── SessionReport.jsx          # 세션 종료 후 결과 리포트
-│   │       ├── MyArchive.jsx              # 학습 기록 아카이브
-│   │       └── Register.jsx              # 회원가입
+│   │       ├── UploadAnalysis.jsx         # PDF 업로드 + 실제 KG 시각화 (API 연동)
+│   │       ├── TeacherMode.jsx            # 페인만 기법 채팅 — sessions API 연동
+│   │       ├── StudentMode.jsx            # AI 튜터 채팅 (목 데이터, 미연동)
+│   │       ├── SessionReport.jsx          # 세션 리포트 — 실데이터 + KG 비교 시각화
+│   │       ├── MyArchive.jsx              # 학습 기록 아카이브 — documents/sessions API 연동
+│   │       └── Register.jsx              # 회원가입 (API 연동)
 ├── docker-compose.yml                     # PostgreSQL + pgvector DB
 └── Readme.md
 ```
@@ -349,22 +353,38 @@ npm run dev
 - [x] Evaluator LLM (`evaluator_llm.py` — 루브릭 채점 + User KG 업데이트)
 - [x] Student LLM (`student_llm.py` — 정보 격리 기반 질문 생성)
 - [x] 2-에이전트 세션 오케스트레이터 (`session_service.py`)
-- [x] REST API 엔드포인트 (`documents`, `knowledge-graphs`, `sessions`, `debug_kg`)
-- [x] DB 모델 및 Alembic 마이그레이션
+- [x] REST API 엔드포인트
+  - [x] `GET /api/v1/documents` — 문서 목록 조회
+  - [x] `POST /api/v1/documents/upload` — PDF 업로드 + KG 생성
+  - [x] `GET /api/v1/documents/{id}` — 문서 상태 조회
+  - [x] `GET /api/v1/documents/{id}/sessions` — 문서별 세션 이력 조회
+  - [x] `GET /api/v1/knowledge-graphs/{id}` / `/reference` / `/user` — KG 조회
+  - [x] `POST /api/v1/sessions/start` / `turn` / `end` — 세션 관리
+  - [x] `POST /api/v1/auth/register` / `login` — 회원가입·로그인
+- [x] DB 모델 및 Alembic 마이그레이션 (autogenerate 활성화)
+  - [x] `Document`, `Chunk`, `KnowledgeGraph`, `SessionRecord`, `User` 모델
+- [x] 세션 종료 시 `SessionRecord` 자동 저장 (점수·커버리지·오개념·종료 사유)
+- [x] 비밀번호 bcrypt 해싱 (`passlib` 의존성 제거, `bcrypt` 직접 사용)
 
 **프론트엔드**
 - [x] 전체 페이지 UI 구현 (MainPage, UploadAnalysis, TeacherMode, StudentMode, SessionReport, MyArchive, Register)
-- [x] KG 시각화 컴포넌트 (`KnowledgeGraph.jsx`)
+- [x] KG 시각화 컴포넌트 (`KnowledgeGraph.jsx`) — centered subtree 트리 레이아웃, 2줄 레이블
 - [x] 커버리지 도넛 차트 (`DonutChart.jsx`)
 - [x] 인증 컨텍스트 (`AuthContext.jsx`)
+- [x] API 유틸리티 (`api.js`) — 공통 fetch 래퍼, KG 레이아웃/엣지 변환 함수
+
+**프론트엔드 ↔ 백엔드 연동**
+- [x] UploadAnalysis — 실제 PDF 업로드 + Reference KG 시각화
+- [x] TeacherMode — `sessions/start·turn·end` API 연동, 실시간 오개념 표시
+- [x] SessionReport — 세션 결과 실데이터 표시, User KG BEFORE/AFTER 비교, 노드별 체크리스트
+- [x] MyArchive — 문서 목록·세션 이력 실데이터 연동
+- [x] Register / LoginModal — 백엔드 회원가입·로그인 API 연동
 
 ### 🚧 진행 중 / 예정
 
-- [ ] 프론트엔드 ↔ 백엔드 API 연동 (현재 TeacherMode·StudentMode 목 데이터 사용 중)
-- [ ] 로그인 / 회원가입 백엔드 연동
-- [ ] 세션 리포트 실데이터 연동 (KG 커버리지 시각화 포함)
-- [ ] UploadAnalysis 실제 API 연동
+- [ ] StudentMode 백엔드 연동 (RAG 기반 Q&A API 미구현)
 - [ ] Evaluator LLM 루브릭 일관성 검증 (저품질/중간/고품질 샘플로 5회 반복 편차 ±1점 확인)
+- [ ] 사용자별 문서 격리 (현재 모든 사용자가 동일 문서 목록 공유)
 
 ---
 
