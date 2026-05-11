@@ -158,7 +158,7 @@ export function layoutKGNodes(nodes, edges, width, height) {
     x: pos[n.id]?.x ?? Math.round(width / 2),
     y: pos[n.id]?.y ?? Math.round(height / 2),
     status: n.status || 'missing',
-    checklist: n.checklist_result || [],
+    checklist: n.checklist || [],
   }));
 }
 
