@@ -73,19 +73,16 @@ class EndSessionRequest(BaseModel):
 
 class StartSessionResponse(BaseModel):
     first_question: str
-    intent:         str
 
 
 class TurnResponse(BaseModel):
     # 이번 턴 평가 결과
     scores:         dict
     total:          int
-    weak_areas:     list[str]
     misconceptions: list[dict]
 
     # 다음 질문 (세션이 계속되는 경우)
     next_question: str | None = None
-    next_intent:   str | None = None
 
     # 세션 종료 정보
     is_session_done:    bool
@@ -149,7 +146,6 @@ def api_start_session(
     )
     return StartSessionResponse(
         first_question=result.first_question,
-        intent=result.intent,
     )
 
 
@@ -190,10 +186,8 @@ def api_process_turn(
     return TurnResponse(
         scores=result.scores,
         total=result.total,
-        weak_areas=result.weak_areas,
         misconceptions=result.misconceptions,
         next_question=result.next_question,
-        next_intent=result.next_intent,
         is_session_done=result.is_session_done,
         termination_reason=result.termination_reason,
         session_summary=result.session_summary,
