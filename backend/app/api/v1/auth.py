@@ -1,6 +1,6 @@
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -8,7 +8,13 @@ from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def _hash(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _verify(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
 # ── 스키마 ─────────────────────────────────────────────────
@@ -43,7 +49,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
     user = User(
         username=body.username,
-        password_hash=_pwd.hash(body.password),
+        password_hash=_hash(body.password),
         name=body.name,
         email=body.email,
     )
@@ -58,7 +64,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """로그인 — 아이디·비밀번호 불일치 시 401 반환."""
     user = db.query(User).filter(User.username == body.username).first()
-    if not user or not _pwd.verify(body.password, user.password_hash):
+    if not user or not _verify(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
 
     return UserResponse(id=user.username, name=user.name, email=user.email)
