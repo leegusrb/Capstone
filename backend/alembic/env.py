@@ -21,7 +21,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.database import Base  # noqa: E402
-from app.models import document, chunk, session_record  # noqa: E402, F401
+from app.models import document, chunk, session_record, user  # noqa: E402, F401
 
 target_metadata = Base.metadata
 

@@ -24,13 +24,13 @@ export default function Register() {
     setErrors(prev => ({ ...prev, [e.target.name]: undefined }));
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const e2 = validate();
     if (Object.keys(e2).length > 0) { setErrors(e2); return; }
-    const result = register(form);
+    const result = await register(form);
     if (!result.ok) { setErrors({ id: result.msg }); return; }
-    login({ id: form.id, password: form.password });
+    await login({ id: form.id, password: form.password });
     setDone(true);
   }
 

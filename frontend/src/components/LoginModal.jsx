@@ -14,10 +14,10 @@ export default function LoginModal({ onClose }) {
     setError('');
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!form.id.trim() || !form.password) { setError('아이디와 비밀번호를 입력해주세요.'); return; }
-    const result = login(form);
+    const result = await login(form);
     if (result.ok) {
       onClose();
     } else {

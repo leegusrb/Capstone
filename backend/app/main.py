@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.api.v1 import documents, knowledge_graphs, sessions
+from app.api.v1 import auth, documents, knowledge_graphs, sessions
 
 
 app = FastAPI(
@@ -19,6 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router,             prefix="/api/v1")
 app.include_router(documents.router,        prefix="/api/v1")
 app.include_router(knowledge_graphs.router, prefix="/api/v1")
 app.include_router(sessions.router,         prefix="/api/v1")
