@@ -45,8 +45,8 @@ export default function UploadAnalysis() {
       const refEdges = kgData.reference_kg?.edges || [];
 
       setDocInfo({ id: uploaded.id, filename: uploaded.filename, chunk_count: uploaded.chunk_count });
-      setKgNodes(layoutKGNodes(refNodes, 500, 370));
       setKgEdges(convertEdges(refEdges));
+      setKgNodes(layoutKGNodes(refNodes, refEdges, 560, 420));
       setPhase('done');
     } catch (e) {
       clearTimeout(t1);
@@ -167,7 +167,7 @@ export default function UploadAnalysis() {
                 </div>
               </div>
               <div className="kg-bg">
-                <KnowledgeGraph nodes={kgNodes} edges={kgEdges} width={500} height={370} />
+                <KnowledgeGraph nodes={kgNodes} edges={kgEdges} width={560} height={420} />
               </div>
             </div>
 

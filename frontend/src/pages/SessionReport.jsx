@@ -89,8 +89,8 @@ export default function SessionReport() {
     api.getUserKG(document_id).then(data => {
       const nodes = data.user_kg?.nodes || [];
       const edges = data.user_kg?.edges || [];
-      setAfterNodes(layoutKGNodes(nodes, 380, 270));
       setAfterEdges(convertEdges(edges));
+      setAfterNodes(layoutKGNodes(nodes, edges, 420, 310));
     }).catch(() => {});
   }, [document_id]);
 
@@ -168,7 +168,7 @@ export default function SessionReport() {
           <div className="card kg-cmp">
             <div className="cmp-badge before">BEFORE</div>
             <div className="kg-bg">
-              <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={380} height={270} />
+              <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={420} height={310} />
             </div>
           </div>
           <div className="cmp-arrow">→</div>
@@ -176,7 +176,7 @@ export default function SessionReport() {
             <div className="cmp-badge after">AFTER</div>
             <div className="kg-bg">
               <KnowledgeGraph
-                nodes={afterNodes} edges={afterEdges} width={380} height={270}
+                nodes={afterNodes} edges={afterEdges} width={420} height={310}
                 onNodeClick={handleNodeClick}
                 selectedNodeId={selectedNode?.id}
               />

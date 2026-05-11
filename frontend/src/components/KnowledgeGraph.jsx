@@ -1,5 +1,23 @@
 import { useState } from 'react';
 
+function splitLabel(label) {
+  if (label.includes(' ')) return label.split(' ').slice(0, 2);
+  if (label.length > 5) return [label.slice(0, 5), label.slice(5)];
+  return [label];
+}
+
+function NodeLabel({ label, r, fill, fontWeight }) {
+  const lines = splitLabel(label);
+  return (
+    <text textAnchor="middle" fill={fill} fontSize={10}
+      fontFamily="Inter,sans-serif" fontWeight={fontWeight}>
+      {lines.map((line, i) => (
+        <tspan key={i} x={0} y={r + 13 + i * 12}>{line}</tspan>
+      ))}
+    </text>
+  );
+}
+
 const STATUS_COLOR = {
   confirmed: '#10b981',
   partial: '#f59e0b',
@@ -15,12 +33,19 @@ const STATUS_STROKE = {
   misconception: '#dc2626',
 };
 
+const VPAD_X = 35; // viewBox 좌우 여백 (레이블 잘림 방지)
+const VPAD_Y = 20; // viewBox 상하 여백
+
 export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);
   if (!nodes || !edges) return null;
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }}>
+    <svg
+      width={width} height={height}
+      viewBox={`${-VPAD_X} ${-VPAD_Y} ${width + VPAD_X * 2} ${height + VPAD_Y * 2}`}
+      style={{ overflow: 'visible' }}
+    >
       <defs>
         <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
           <path d="M0,0 L0,6 L6,3 z" fill="#cbd5e1"/>
@@ -56,7 +81,7 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
         const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
         const isHov = hovered === n.id;
         const isSel = selectedNodeId === n.id;
-        const r = 14;
+        const r = 12;
         return (
           <g key={n.id} transform={`translate(${n.x},${n.y})`}
             onMouseEnter={() => setHovered(n.id)}
@@ -76,13 +101,10 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
               filter={n.status !== 'missing' ? `url(#g${n.id})` : ''}
               style={{ transition: 'all 0.3s ease' }}
             />
-            <text y={r + 14} textAnchor="middle"
+            <NodeLabel label={n.label} r={r}
               fill={n.status === 'missing' ? '#94a3b8' : '#0f172a'}
-              fontSize={10} fontFamily="Inter,sans-serif"
               fontWeight={isHov || isSel ? 700 : 500}
-            >
-              {n.label}
-            </text>
+            />
           </g>
         );
       })}
