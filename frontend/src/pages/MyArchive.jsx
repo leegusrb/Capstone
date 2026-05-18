@@ -26,7 +26,21 @@ export default function MyArchive() {
 
   useEffect(() => {
     api.getDocuments()
-      .then(data => setDocs(data.filter(d => d.status === 'done')))
+      .then(async data => {
+        const doneDocs = data.filter(d => d.status === 'done');
+        setDocs(doneDocs);
+        const results = await Promise.allSettled(
+          doneDocs.map(doc => api.getDocumentSessions(doc.id).then(s => [doc.id, s]))
+        );
+        const sessMap = {};
+        results.forEach(r => {
+          if (r.status === 'fulfilled') {
+            const [id, s] = r.value;
+            sessMap[id] = s;
+          }
+        });
+        setSessions(sessMap);
+      })
       .catch(e => setError(e.message || '문서 목록을 불러오지 못했습니다.'))
       .finally(() => setLoadingDocs(false));
   }, []);

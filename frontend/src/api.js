@@ -104,8 +104,8 @@ export function layoutKGNodes(nodes, edges, width, height) {
 
   // ── Centered subtree x 배치 ─────────────────────────────
   // DFS로 리프에 순차 인덱스 부여 → 부모는 자식 인덱스의 중앙에 위치
-  const MIN_SPACING = 90; // 리프 노드 간 최소 간격(px)
-  const padX = 60, padY = 65;
+  const MIN_SPACING = 50; // 리프 노드 간 최소 간격(px)
+  const padX = 38, padY = 38;
 
   let leafIdx = 0;
   const xIdx = {};         // 노드별 수평 인덱스 (소수 가능)
@@ -135,21 +135,16 @@ export function layoutKGNodes(nodes, edges, width, height) {
   // 미방문 노드(고립) 처리
   ids.forEach(id => { if (xIdx[id] === undefined) xIdx[id] = leafIdx++; });
 
-  // 총 리프 수 기준으로 캔버스 크기 결정
-  const totalLeaves = Math.max(leafIdx, 1);
-  const effW = Math.max(width,  padX * 2 + (totalLeaves - 1) * MIN_SPACING);
-  const effH = Math.max(height, padY * 2 + (numLevels  - 1) * MIN_SPACING);
-
-  const scaleX = width  / effW;
-  const scaleY = height / effH;
+  // 자연 간격으로 배치 — KnowledgeGraph의 viewBox가 박스 안에 맞게 스케일링
+  const VERT_GAP = 130;
 
   const pos = {};
   ids.forEach(id => {
     const lx = padX + xIdx[id] * MIN_SPACING;
     const ly = maxLevel === 0
-      ? effH / 2
-      : padY + (level[id] / maxLevel) * (effH - padY * 2);
-    pos[id] = { x: Math.round(lx * scaleX), y: Math.round(ly * scaleY) };
+      ? 0
+      : padY + (level[id] / maxLevel) * maxLevel * VERT_GAP;
+    pos[id] = { x: Math.round(lx), y: Math.round(ly) };
   });
 
   return nodes.map(n => ({
@@ -169,5 +164,9 @@ export function convertEdges(edges) {
 // misconception dict → 표시용 문자열
 export function getMisconceptionText(m) {
   if (typeof m === 'string') return m;
+  if (m.content && m.correction) {
+    const prefix = m.node ? `[${m.node}] ` : '';
+    return `${prefix}"${m.content}"라고 설명했지만, "${m.correction}"이 맞습니다.`;
+  }
   return m.description || m.text || m.message || JSON.stringify(m);
 }

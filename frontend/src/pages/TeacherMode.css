@@ -70,6 +70,7 @@
 .eval-row span { color: #64748b; }
 .eval-row strong { font-weight: 700; }
 
+
 /* Misconception panel */
 .misconception-panel { animation: slideIn 0.3s ease; }
 .mc-item { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; }

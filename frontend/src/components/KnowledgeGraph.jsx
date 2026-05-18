@@ -9,10 +9,10 @@ function splitLabel(label) {
 function NodeLabel({ label, r, fill, fontWeight }) {
   const lines = splitLabel(label);
   return (
-    <text textAnchor="middle" fill={fill} fontSize={10}
+    <text textAnchor="middle" fill={fill} fontSize={13}
       fontFamily="Inter,sans-serif" fontWeight={fontWeight}>
       {lines.map((line, i) => (
-        <tspan key={i} x={0} y={r + 13 + i * 12}>{line}</tspan>
+        <tspan key={i} x={0} y={r + 16 + i * 15}>{line}</tspan>
       ))}
     </text>
   );
@@ -33,17 +33,34 @@ const STATUS_STROKE = {
   misconception: '#dc2626',
 };
 
-const VPAD_X = 35; // viewBox 좌우 여백 (레이블 잘림 방지)
-const VPAD_Y = 20; // viewBox 상하 여백
+// 레이블이 노드 중심에서 벗어나는 여백
+const LBL_X   = 58;  // 좌우 (레이블 최대 폭의 절반)
+const LBL_TOP = 26;  // 위
+const LBL_BOT = 62;  // 아래 (2줄 레이블: r+16+15 + 여유)
 
 export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);
   if (!nodes || !edges) return null;
 
+  // 노드 bounding box → viewBox 계산
+  // vbW/vbH 최솟값을 width/height로 두어 스케일이 1 이하로만 동작
+  let vbX = 0, vbY = 0, vbW = width, vbH = height;
+  if (nodes.length > 0) {
+    const xs = nodes.map(n => n.x);
+    const ys = nodes.map(n => n.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    vbX = minX - LBL_X;
+    vbY = minY - LBL_TOP;
+    vbW = Math.max(maxX - minX + LBL_X * 2, width);
+    vbH = maxY - minY + LBL_TOP + LBL_BOT;
+  }
+
   return (
     <svg
       width={width} height={height}
-      viewBox={`${-VPAD_X} ${-VPAD_Y} ${width + VPAD_X * 2} ${height + VPAD_Y * 2}`}
+      viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+      preserveAspectRatio="xMidYMid meet"
       style={{ overflow: 'visible' }}
     >
       <defs>
@@ -81,7 +98,7 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
         const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
         const isHov = hovered === n.id;
         const isSel = selectedNodeId === n.id;
-        const r = 12;
+        const r = 20;
         return (
           <g key={n.id} transform={`translate(${n.x},${n.y})`}
             onMouseEnter={() => setHovered(n.id)}

@@ -99,7 +99,7 @@ export default function SessionReport() {
 
   const rubricScores = Object.entries(scores)
     .filter(([k]) => SCORE_LABELS[k])
-    .map(([k, v]) => ({ label: SCORE_LABELS[k], score: +(v * 10 / 3).toFixed(1), max: 10 }));
+    .map(([k, v]) => ({ label: SCORE_LABELS[k], score: v, max: 3 }));
 
   function handleNodeClick(node) {
     setSelectedNode(prev => prev?.id === node.id ? null : node);
@@ -130,7 +130,7 @@ export default function SessionReport() {
                   <div className="progress-bar" style={{ flex: 1 }}>
                     <div className="progress-fill" style={{ width: `${(r.score / r.max) * 100}%` }} />
                   </div>
-                  <span className="score-num">{r.score}</span>
+                  <span className="score-num">{r.score}/3</span>
                 </div>
               </div>
             ))}
