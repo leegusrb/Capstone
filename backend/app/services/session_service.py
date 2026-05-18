@@ -21,16 +21,24 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.models.session_record import SessionRecord
 from app.services.kg_service import (
+    get_best_scores,
     get_kg_coverage,
     get_missing_nodes,
+    get_specificity_state,
     get_student_context,
     load_kg_from_db,
     save_kg_to_db,
+    update_best_scores,
+    update_specificity_state,
     update_user_kg_from_evaluator,
 )
 from app.services.evaluator_llm import (
     EvaluatorResult,
+    RubricScores,
+    SCORE_THRESHOLD,
+    SCORE_CATEGORIES,
     build_session_summary,
+    compute_rubric_scores,
     evaluate_explanation,
 )
 from app.services.student_llm import (
@@ -148,6 +156,9 @@ def process_turn(
         raise ValueError(f"Document {document_id}의 KG가 존재하지 않습니다.")
     reference_kg, user_kg = kgs
 
+    # 이전 세션까지의 최고 점수 (KG에 저장된 값)
+    best_scores = get_best_scores(user_kg)
+
     # ── 2. RAG 검색 (실제 문서 청크) ──
     rag_chunks = _retrieve_rag_chunks(db, document_id, query=user_explanation)
 
@@ -162,60 +173,86 @@ def process_turn(
         model=model,
     )
 
-    # ── 4. User KG 업데이트 + DB 저장 ──
+    # ── 4. User KG 업데이트 ──
     user_kg = update_user_kg_from_evaluator(user_kg, {
         "updated_user_kg": eval_result.updated_user_kg,
         "misconceptions":  eval_result.misconceptions,
     })
+
+    # ── 5. 구체성 체크리스트 누적 업데이트 ──
+    accumulated_specificity = get_specificity_state(user_kg)
+    merged_specificity = {
+        k: eval_result.specificity_checklist.get(k, False) or accumulated_specificity.get(k, False)
+        for k in set(accumulated_specificity) | set(eval_result.specificity_checklist)
+    }
+    update_specificity_state(user_kg, merged_specificity)
+
+    # ── 6. 업데이트된 KG 기반 루브릭 점수 계산 (구체성은 누적 체크리스트 사용) ──
+    scores = compute_rubric_scores(user_kg, reference_kg, merged_specificity)
+
+    # 누적 보장: concept/accuracy/logic은 이전 최고 점수를 floor로 적용
+    scores = RubricScores(
+        concept     = max(scores.concept,     best_scores.get("concept",     0)),
+        accuracy    = max(scores.accuracy,    best_scores.get("accuracy",    0)),
+        logic       = max(scores.logic,       best_scores.get("logic",       0)),
+        specificity = scores.specificity,  # KG 누적으로 자체 보장
+    )
+
+    # 갱신된 점수를 KG에 저장 (다음 세션 floor로 사용)
+    update_best_scores(user_kg, scores.to_dict())
     save_kg_to_db(db, document_id, reference_kg, user_kg)
+
+    total = scores.total
+    is_sufficient = total >= SCORE_THRESHOLD
+    termination_reason = "score" if is_sufficient else None
+    weak_areas = [cat for cat in SCORE_CATEGORIES if scores.to_dict().get(cat, 0) <= 1]
 
     coverage      = get_kg_coverage(user_kg, reference_kg)
     missing_nodes = get_missing_nodes(user_kg)
 
-    # ── 5. 세션 종료 분기 ──
-    if eval_result.is_sufficient:
-        updated_history = session_history + [eval_result.scores.to_dict()]
+    # ── 6. 세션 종료 분기 ──
+    if is_sufficient:
+        updated_history = session_history + [scores.to_dict()]
         summary = build_session_summary(
             session_history=updated_history,
             user_kg=user_kg,
             reference_kg=reference_kg,
-            termination_reason=eval_result.termination_reason or "score",
+            termination_reason=termination_reason,
         )
         closing = generate_session_closing_message(
             topic=topic,
-            termination_reason=eval_result.termination_reason or "score",
+            termination_reason=termination_reason,
             session_summary=summary,
             model=model,
         )
         logger.info(
-            "세션 종료 — 사유: %s | 커버리지: %.1f%%",
-            eval_result.termination_reason,
-            coverage.get("coverage_percent", 0),
+            "세션 종료 — 사유: %s | 총점: %d | 커버리지: %.1f%%",
+            termination_reason, total, coverage.get("coverage_percent", 0),
         )
         _save_session_record(
             db=db,
             document_id=document_id,
             topic=topic,
-            total_score=eval_result.total,
+            total_score=total,
             turn_count=turn_count,
-            termination_reason=eval_result.termination_reason or "score",
+            termination_reason=termination_reason,
             coverage_percent=coverage.get("coverage_percent", 0.0),
             misconceptions=[m.get("description", str(m)) for m in eval_result.misconceptions],
             session_summary=summary,
         )
         return TurnResult(
-            scores=eval_result.scores.to_dict(),
-            total=eval_result.total,
+            scores=scores.to_dict(),
+            total=total,
             misconceptions=eval_result.misconceptions,
             is_session_done=True,
-            termination_reason=eval_result.termination_reason,
+            termination_reason=termination_reason,
             session_summary=summary,
             closing_message=closing,
             coverage=coverage,
             missing_nodes=missing_nodes,
         )
 
-    # ── 6. 다음 질문 생성 ──
+    # ── 7. 다음 질문 생성 ──
     student_context = get_student_context(user_kg)
 
     next_student: StudentResponse = generate_student_question(
@@ -225,14 +262,11 @@ def process_turn(
         model=model,
     )
 
-    logger.info(
-        "턴 %d 완료 — 총점: %d",
-        turn_count, eval_result.total,
-    )
+    logger.info("턴 %d 완료 — 총점: %d | weak: %s", turn_count, total, weak_areas)
 
     return TurnResult(
-        scores=eval_result.scores.to_dict(),
-        total=eval_result.total,
+        scores=scores.to_dict(),
+        total=total,
         misconceptions=eval_result.misconceptions,
         next_question=next_student.question,
         is_session_done=False,
@@ -273,12 +307,17 @@ def end_session_early(
     document_id: int,
     session_history: list[dict],
     db: DBSession,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.4-mini",
 ) -> TurnResult:
     kgs = load_kg_from_db(db, document_id)
     if not kgs:
         raise ValueError(f"Document {document_id}의 KG가 존재하지 않습니다.")
     reference_kg, user_kg = kgs
+
+    # KG에 누적된 구체성 체크리스트로 점수 계산
+    accumulated_specificity = get_specificity_state(user_kg)
+    scores_obj = compute_rubric_scores(user_kg, reference_kg, accumulated_specificity)
+    coverage = get_kg_coverage(user_kg, reference_kg)
 
     summary = build_session_summary(
         session_history=session_history,
@@ -293,12 +332,7 @@ def end_session_early(
         model=model,
     )
 
-    empty_scores = {"concept": 0, "accuracy": 0, "logic": 0, "specificity": 0}
-    coverage = get_kg_coverage(user_kg, reference_kg)
-
-    avg_total = 0
-    if session_history:
-        avg_total = round(sum(sum(t.values()) for t in session_history) / len(session_history))
+    avg_total = scores_obj.total
 
     _save_session_record(
         db=db,
@@ -313,8 +347,8 @@ def end_session_early(
     )
 
     return TurnResult(
-        scores=empty_scores,
-        total=0,
+        scores=scores_obj.to_dict(),
+        total=avg_total,
         misconceptions=[],
         is_session_done=True,
         termination_reason="user",

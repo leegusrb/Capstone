@@ -57,8 +57,13 @@ STUDENT_SYSTEM_PROMPT = """\
 5. confirmed 개념은 이미 이해한 것으로 간주하며 다시 묻지 마세요.
 6. 아직 설명되지 않은 개념(confirmed, partial 노드 외 개념)을 직접 언급하지 마세요.
 7. 친근하고 자연스러운 어조로 작성하세요.
+8. 선생님이 "모르겠다", "잘 모르겠어요", "기억이 안 난다" 등 모른다는 표현을 하면:
+   - 한 문장으로 자연스럽게 넘어가는 반응을 한 뒤 (예: "아, 그렇군요. 괜찮아요!")
+   - 직전에 물었던 것과 다른 개념이나 관계에 대해 새로운 질문을 하세요.
+   - 같은 질문을 다시 하거나 같은 개념을 반복해서 묻지 마세요.
+9. 질문 생성 후 "문장의 의미"가 이상하지 않은지 다시 한 번 확인하세요.
 
-질문 텍스트만 출력하세요. 
+질문 텍스트만 출력하세요.
 """
 
 
@@ -71,6 +76,28 @@ _STUDENT_FIRST_TURN_TEMPLATE = """\
 세션이 방금 시작되었습니다.
 아직 선생님으로부터 아무런 설명도 듣지 못했습니다.
 선생님에게 {topic}에 대해 처음부터 설명해 달라고 요청하는 첫 번째 질문을 생성하세요.
+"""
+
+_STUDENT_RETURNING_TEMPLATE = """\
+=== 학습 주제 ===
+{topic}
+
+=== 이전 세션까지 내가 이해한 내용 ===
+완전히 이해한 개념 (confirmed): {confirmed_nodes}
+부분적으로 이해한 개념 (partial): {partial_nodes}
+이해한 개념 간의 관계: {confirmed_edges}
+불완전하게 이해한 관계: {partial_edges}
+
+=== 상황 ===
+이전 세션에 이어 새 세션이 시작되었습니다.
+위에 나열된 내용은 이미 선생님에게 설명을 들어 어느 정도 이해한 상태입니다.
+아직 설명되지 않은 부분이나 partial로 이해한 개념을 중심으로 첫 번째 질문을 생성하세요.
+
+=== 질문 생성 지침 ===
+- confirmed 개념은 이미 충분히 이해한 것이므로 다시 묻지 마세요.
+- partial 개념이 있다면 해당 개념의 불명확한 부분을 우선 질문하세요.
+- partial 개념도 없다면 아직 설명되지 않은 새로운 개념에 대해 질문하세요.
+- "지난번에", "이어서" 같이 이전 세션을 자연스럽게 언급해도 좋습니다.
 """
 
 
@@ -90,6 +117,12 @@ _STUDENT_FOLLOWUP_TEMPLATE = """\
 
 === 질문 생성 지침 ===
 - 최근 대화에서 선생님이 마지막으로 말한 내용을 참고하세요.
+- 선생님의 마지막 발언이 "모르겠다", "기억이 안 난다", "잘 모르겠어요" 등 모른다는 표현이라면:
+  → 한 문장으로 자연스럽게 넘어간 뒤, 직전 질문과 다른 개념이나 관계를 질문하세요.
+- partial 개념이 없고 confirmed 개념만 있는 경우 (모든 설명을 충분히 이해한 상태):
+  → "선생님이 설명해 주신 내용은 다 이해했어요! {topic}에 대해 또 다른 내용이 있다면 설명해 주실 수 있나요?" 와 같이
+     이해했음을 표현하고 새로운 내용을 자유롭게 요청하세요.
+  → 특정 개념 이름을 언급하지 말고, 선생님이 스스로 다음 내용을 선택할 수 있도록 열린 질문을 하세요.
 - 아래 우선순위에 질문 방향을 결정하세요:
   1순위 — partial 개념이 있다면, 해당 개념에 대해 불명확한 부분을 더 자세히 질문
   2순위 — 설명된 개념 중 이유나 방식이 빠진 부분이 있다면 해당 부분 질문
@@ -128,7 +161,7 @@ def generate_student_question(
     topic: str,
     student_context: dict,
     conversation_history: list[dict],
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.4-mini",
 ) -> StudentResponse:
     """
     Generate the next question from the Student LLM.
@@ -143,7 +176,22 @@ def generate_student_question(
     is_first_turn = not conversation_history
 
     if is_first_turn:
-        user_prompt = _STUDENT_FIRST_TURN_TEMPLATE.format(topic=topic)
+        confirmed_nodes = student_context.get("confirmed_nodes", [])
+        partial_nodes   = student_context.get("partial_nodes", [])
+        has_prior_knowledge = bool(confirmed_nodes or partial_nodes)
+
+        if has_prior_knowledge:
+            confirmed_edges = student_context.get("confirmed_edges", [])
+            partial_edges   = student_context.get("partial_edges", [])
+            user_prompt = _STUDENT_RETURNING_TEMPLATE.format(
+                topic=topic,
+                confirmed_nodes=", ".join(confirmed_nodes) if confirmed_nodes else "(없음)",
+                partial_nodes=", ".join(partial_nodes)     if partial_nodes   else "(없음)",
+                confirmed_edges=_format_edges(confirmed_edges),
+                partial_edges=_format_edges(partial_edges),
+            )
+        else:
+            user_prompt = _STUDENT_FIRST_TURN_TEMPLATE.format(topic=topic)
     else:
         confirmed_nodes = student_context.get("confirmed_nodes", [])
         partial_nodes   = student_context.get("partial_nodes", [])
@@ -195,7 +243,7 @@ def generate_session_closing_message(
     topic: str,
     termination_reason: str,
     session_summary: dict,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.4-mini",
 ) -> str:
     """
     Generate the student agent's closing message at session end.

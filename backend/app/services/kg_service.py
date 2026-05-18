@@ -255,10 +255,27 @@ def update_user_kg_from_evaluator(
         completion_ratio = float(node.get("completion_ratio", 0.0))
 
         if node_id in user_kg:
+            # checklist 병합: met=true는 누적 유지 (한 번 확인된 항목은 되돌리지 않음)
+            existing_cl = user_kg.nodes[node_id].get("checklist_result", [])
+            if existing_cl and checklist_result:
+                existing_met = {item["item"]: item.get("met", False) for item in existing_cl}
+                checklist_result = [
+                    {"item": item["item"], "met": item.get("met", False) or existing_met.get(item["item"], False)}
+                    for item in checklist_result
+                ]
+            # 병합된 checklist 기반으로 completion_ratio 재계산
+            if checklist_result:
+                met_count = sum(1 for item in checklist_result if item.get("met", False))
+                completion_ratio = met_count / len(checklist_result)
+
+            # status 결정: misconception은 그대로 / 나머지는 병합 ratio 기준
+            if status != NodeStatus.MISCONCEPTION:
+                status = NodeStatus.CONFIRMED if completion_ratio >= 1.0 else NodeStatus.PARTIAL
+
             user_kg.nodes[node_id]["status"] = status
             user_kg.nodes[node_id]["checklist_result"] = checklist_result
             user_kg.nodes[node_id]["completion_ratio"] = completion_ratio
-            logger.info("KG 업데이트 성공: '%s' → %s", node_id, status)
+            logger.info("KG 업데이트 성공: '%s' → %s (ratio=%.2f)", node_id, status, completion_ratio)
             continue
 
     for edge in updated.get("edges", []):
@@ -335,6 +352,50 @@ def get_missing_nodes(user_kg: nx.DiGraph) -> list[str]:
     return get_nodes_by_status(user_kg, NodeStatus.MISSING)
 
 
+_BEST_SCORES_NODE = "__best_scores__"
+_SCORE_KEYS = ("concept", "accuracy", "logic", "specificity")
+
+
+def get_best_scores(user_kg: nx.DiGraph) -> dict:
+    """이전 세션까지 document에서 달성한 카테고리별 최고 점수를 반환한다."""
+    if _BEST_SCORES_NODE in user_kg:
+        return dict(user_kg.nodes[_BEST_SCORES_NODE].get("scores", {}))
+    return {k: 0 for k in _SCORE_KEYS}
+
+
+def update_best_scores(user_kg: nx.DiGraph, new_scores: dict) -> None:
+    """카테고리별 최고 점수를 갱신한다. User KG에 저장되므로 DB에 자동 persist된다."""
+    if _BEST_SCORES_NODE not in user_kg:
+        user_kg.add_node(_BEST_SCORES_NODE, scores={k: 0 for k in _SCORE_KEYS})
+    existing = user_kg.nodes[_BEST_SCORES_NODE].get("scores", {})
+    user_kg.nodes[_BEST_SCORES_NODE]["scores"] = {
+        k: max(new_scores.get(k, 0), existing.get(k, 0))
+        for k in _SCORE_KEYS
+    }
+
+
+_SPECIFICITY_NODE = "__specificity__"
+_SPECIFICITY_KEYS = ("example_present", "concrete_terms", "sentence_explained", "context_applied")
+
+
+def get_specificity_state(user_kg: nx.DiGraph) -> dict:
+    """누적된 구체성 체크리스트 상태를 반환한다."""
+    if _SPECIFICITY_NODE in user_kg:
+        return dict(user_kg.nodes[_SPECIFICITY_NODE].get("checklist", {}))
+    return {k: False for k in _SPECIFICITY_KEYS}
+
+
+def update_specificity_state(user_kg: nx.DiGraph, new_checklist: dict) -> None:
+    """구체성 체크리스트를 누적 업데이트한다. true는 한 번 달성되면 유지된다."""
+    if _SPECIFICITY_NODE not in user_kg:
+        user_kg.add_node(_SPECIFICITY_NODE, checklist={k: False for k in _SPECIFICITY_KEYS})
+    existing = user_kg.nodes[_SPECIFICITY_NODE].get("checklist", {})
+    user_kg.nodes[_SPECIFICITY_NODE]["checklist"] = {
+        k: new_checklist.get(k, False) or existing.get(k, False)
+        for k in _SPECIFICITY_KEYS
+    }
+
+
 def get_misconceptions(user_kg: nx.DiGraph) -> list[dict]:
     """기록된 오개념 목록 반환."""
     misc_node = "__misconceptions__"
@@ -377,7 +438,7 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
     """
     view = []
     for node_id, attrs in user_kg.nodes(data=True):
-        if node_id == "__misconceptions__":
+        if str(node_id).startswith("__"):
             continue
 
         original_checklist = attrs.get("checklist", [])
@@ -415,6 +476,7 @@ def strip_checklist_for_reference_view(kg_dict: dict) -> dict:
     safe_nodes = [
         {k: v for k, v in node.items() if k not in {"checklist", "checklist_result"}}
         for node in kg_dict.get("nodes", [])
+        if not str(node.get("id", "")).startswith("__")
     ]
     return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
 
@@ -433,6 +495,8 @@ def strip_checklist_for_user_view(kg_dict: dict) -> dict:
     """
     safe_nodes = []
     for node in kg_dict.get("nodes", []):
+        if str(node.get("id", "")).startswith("__"):
+            continue
         original_checklist = node.get("checklist", [])          # [{item, source_quote}, ...]
         evaluator_result   = node.get("checklist_result", [])   # [{item, met}, ...]
 
