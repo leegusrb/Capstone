@@ -81,6 +81,7 @@ export default function SessionReport() {
 
   const [afterNodes, setAfterNodes]   = useState([]);
   const [afterEdges, setAfterEdges]   = useState([]);
+  const [kgDims, setKgDims]           = useState({ width: 420, height: 310 });
   const [selectedNode, setSelectedNode] = useState(null);
   const checklistRef = useRef(null);
 
@@ -90,7 +91,9 @@ export default function SessionReport() {
       const nodes = data.user_kg?.nodes || [];
       const edges = data.user_kg?.edges || [];
       setAfterEdges(convertEdges(edges));
-      setAfterNodes(layoutKGNodes(nodes, edges, 420, 310));
+      const laid = layoutKGNodes(nodes, edges, 420, 310);
+      setAfterNodes(laid.nodes);
+      setKgDims({ width: laid.width, height: laid.height });
     }).catch(() => {});
   }, [document_id]);
 
@@ -168,7 +171,7 @@ export default function SessionReport() {
           <div className="card kg-cmp">
             <div className="cmp-badge before">BEFORE</div>
             <div className="kg-bg">
-              <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={420} height={310} />
+              <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height} />
             </div>
           </div>
           <div className="cmp-arrow">→</div>
@@ -176,7 +179,7 @@ export default function SessionReport() {
             <div className="cmp-badge after">AFTER</div>
             <div className="kg-bg">
               <KnowledgeGraph
-                nodes={afterNodes} edges={afterEdges} width={420} height={310}
+                nodes={afterNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height}
                 onNodeClick={handleNodeClick}
                 selectedNodeId={selectedNode?.id}
               />

@@ -991,6 +991,50 @@ def _infer_parent_edges(graph: nx.DiGraph) -> nx.DiGraph:
 
 
 # ──────────────────────────────────────────────
+# 8.10. 단일 부모 강제 [PATCH v4-4]
+# ──────────────────────────────────────────────
+
+def _enforce_single_parent(graph: nx.DiGraph) -> nx.DiGraph:
+    """
+    in-degree > 1인 노드에서 가장 적합한 부모 엣지 하나만 남긴다.
+
+    선택 기준 (우선순위 순):
+      1. _PREFERRED_RELATION_ORDER 인덱스가 낮을수록 우선
+      2. 동점이면 부모 노드의 out-degree가 높은 쪽 (더 일반적인 상위 개념)
+    """
+    pruned = 0
+    for node in list(graph.nodes()):
+        in_edges = list(graph.in_edges(node, data=True))
+        if len(in_edges) <= 1:
+            continue
+
+        def edge_priority(edge):
+            src, _, data = edge
+            rel = data.get("relation", "")
+            rel_rank = (
+                _PREFERRED_RELATION_ORDER.index(rel)
+                if rel in _PREFERRED_RELATION_ORDER
+                else 99
+            )
+            return (rel_rank, -graph.out_degree(src))
+
+        sorted_edges = sorted(in_edges, key=edge_priority)
+        best_src = sorted_edges[0][0]
+
+        for src, tgt, _ in sorted_edges[1:]:
+            graph.remove_edge(src, tgt)
+            pruned += 1
+            logger.warning(
+                "단일 부모 강제: '%s' → '%s' 엣지 제거 (유지 부모: '%s')",
+                src, tgt, best_src,
+            )
+
+    if pruned > 0:
+        logger.info("단일 부모 강제 완료 — %d개 엣지 제거", pruned)
+    return graph
+
+
+# ──────────────────────────────────────────────
 # 9. 진입점 — Reference KG 생성
 # ──────────────────────────────────────────────
 
@@ -1025,7 +1069,7 @@ def _attach_root_node(graph: nx.DiGraph, root_concept: str) -> nx.DiGraph:
 
 def generate_reference_kg(
     text_chunks: list[str],
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.4",
     n_runs: int = 1,
     max_text_chars: int = 12000,
     root_concept: str | None = None,
@@ -1040,7 +1084,9 @@ def generate_reference_kg(
       4. 엣지 방향 모순 제거 (이슈 3 후처리)
       5. 자기 자신 엣지 폐기 [v3.1]
       6. NetworkX 그래프 변환
-      7. 루트 노드 연결 (최상위 노드들을 문서 주제 노드에 연결)
+      6.5. 부모 엣지 추론 (소유격/하위개념 패턴) [v4-3]
+      6.7. 단일 부모 강제 — in-degree > 1 노드를 트리 구조로 정리 [v4-4]
+      7. 루트 노드 연결 (부모 없는 노드들을 문서 주제 노드에 연결)
 
     체크리스트 생성은 PDF 업로드 시 1회만 실행되므로,
     N회 호출에 따른 비용 증가가 사용자 사용 시점 비용에는 영향이 없다.
@@ -1151,6 +1197,9 @@ def generate_reference_kg(
 
     # ── 6.5. 부모 엣지 추론 (소유격/하위개념 패턴) [PATCH v4-3] ──
     graph = _infer_parent_edges(graph)
+
+    # ── 6.7. 단일 부모 강제 [PATCH v4-4] ──────────────────
+    graph = _enforce_single_parent(graph)
 
     # ── 7. 루트 노드 연결 ──────────────────────────────────
     root = root_concept or _extract_root_concept(combined)

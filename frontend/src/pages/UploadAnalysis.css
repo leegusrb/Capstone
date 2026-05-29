@@ -76,7 +76,7 @@
 
 .result-layout { display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }
 .kg-result-card {}
-.kg-bg { background: #f8faff; border-radius: 12px; padding: 20px; display: flex; justify-content: center; }
+.kg-bg { background: #f8faff; border-radius: 12px; padding: 20px; display: flex; justify-content: center; overflow-x: auto; }
 
 .result-right { display: flex; flex-direction: column; gap: 16px; }
 

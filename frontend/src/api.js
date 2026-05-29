@@ -135,26 +135,31 @@ export function layoutKGNodes(nodes, edges, width, height) {
   // 미방문 노드(고립) 처리
   ids.forEach(id => { if (xIdx[id] === undefined) xIdx[id] = leafIdx++; });
 
-  // 자연 간격으로 배치 — KnowledgeGraph의 viewBox가 박스 안에 맞게 스케일링
+  // 수평: 리프 수 기반 동적 확장 / 수직: 레벨당 고정 간격
   const VERT_GAP = 130;
+  const totalLeaves = Math.max(leafIdx, 1);
+  const effW = Math.max(width,  padX * 2 + (totalLeaves - 1) * MIN_SPACING);
+  const effH = Math.max(height, padY * 2 + maxLevel * VERT_GAP);
 
   const pos = {};
   ids.forEach(id => {
     const lx = padX + xIdx[id] * MIN_SPACING;
     const ly = maxLevel === 0
-      ? 0
-      : padY + (level[id] / maxLevel) * maxLevel * VERT_GAP;
+      ? effH / 2
+      : padY + level[id] * VERT_GAP;
     pos[id] = { x: Math.round(lx), y: Math.round(ly) };
   });
 
-  return nodes.map(n => ({
+  const layoutNodes = nodes.map(n => ({
     id: n.id,
     label: n.id,
-    x: pos[n.id]?.x ?? Math.round(width / 2),
-    y: pos[n.id]?.y ?? Math.round(height / 2),
+    x: pos[n.id]?.x ?? Math.round(effW / 2),
+    y: pos[n.id]?.y ?? Math.round(effH / 2),
     status: n.status || 'missing',
     checklist: n.checklist || [],
   }));
+
+  return { nodes: layoutNodes, width: Math.ceil(effW), height: Math.ceil(effH) };
 }
 
 export function convertEdges(edges) {

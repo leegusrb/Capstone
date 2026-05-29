@@ -19,6 +19,7 @@ export default function UploadAnalysis() {
   const [error, setError] = useState('');
   const [kgNodes, setKgNodes] = useState([]);
   const [kgEdges, setKgEdges] = useState([]);
+  const [kgDims, setKgDims]   = useState({ width: 560, height: 420 });
   const [docInfo, setDocInfo] = useState(null); // { id, filename, chunk_count }
   const fileRef = useRef();
 
@@ -46,7 +47,9 @@ export default function UploadAnalysis() {
 
       setDocInfo({ id: uploaded.id, filename: uploaded.filename, chunk_count: uploaded.chunk_count });
       setKgEdges(convertEdges(refEdges));
-      setKgNodes(layoutKGNodes(refNodes, refEdges, 560, 420));
+      const laid = layoutKGNodes(refNodes, refEdges, 560, 420);
+      setKgNodes(laid.nodes);
+      setKgDims({ width: laid.width, height: laid.height });
       setPhase('done');
     } catch (e) {
       clearTimeout(t1);
@@ -167,7 +170,7 @@ export default function UploadAnalysis() {
                 </div>
               </div>
               <div className="kg-bg">
-                <KnowledgeGraph nodes={kgNodes} edges={kgEdges} width={560} height={420} />
+                <KnowledgeGraph nodes={kgNodes} edges={kgEdges} width={kgDims.width} height={kgDims.height} />
               </div>
             </div>
 
