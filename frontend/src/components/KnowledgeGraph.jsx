@@ -1,9 +1,17 @@
 import { useState } from 'react';
 
 function splitLabel(label) {
-  if (label.includes(' ')) return label.split(' ').slice(0, 2);
-  if (label.length > 5) return [label.slice(0, 5), label.slice(5)];
-  return [label];
+  const text = String(label || '');
+  if (!text) return [''];
+  if (text.includes(' ')) {
+    return text.split(/\s+/).filter(Boolean).slice(0, 3);
+  }
+
+  const chunks = [];
+  for (let i = 0; i < text.length; i += 6) {
+    chunks.push(text.slice(i, i + 6));
+  }
+  return chunks.slice(0, 3);
 }
 
 function NodeLabel({ label, r, fill, fontWeight }) {
@@ -34,9 +42,9 @@ const STATUS_STROKE = {
 };
 
 // 레이블이 노드 중심에서 벗어나는 여백
-const LBL_X   = 58;  // 좌우 (레이블 최대 폭의 절반)
+const LBL_X   = 76;  // 좌우 (레이블 최대 폭의 절반)
 const LBL_TOP = 26;  // 위
-const LBL_BOT = 62;  // 아래 (2줄 레이블: r+16+15 + 여유)
+const LBL_BOT = 82;  // 아래 (최대 3줄 레이블 + 여유)
 
 export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);

@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime
 from typing import List, Optional
@@ -8,12 +9,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.exceptions import InvalidFileTypeError, FileTooLargeError, DocumentNotFoundError
+from app.models.chunk import Chunk
 from app.models.document import Document
+from app.models.knowledge_graph import KnowledgeGraph
 from app.models.session_record import SessionRecord
 from app.schemas.document import DocumentUploadResponse, DocumentStatusResponse
 from app.services.pdf_service import save_uploaded_file, extract_and_chunk_pdf
 from app.services.embedding_service import embed_and_save_chunks
 from app.services.kg_service import (
+    deserialize_kg,
     init_user_kg,
     save_kg_to_db,
 )
@@ -22,6 +26,41 @@ from app.services.reference_kg_generator import generate_reference_kg
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20MB
+
+
+def _find_cached_document(db: Session, file_hash: str) -> Document | None:
+    """같은 PDF 해시로 이미 완료된 문서를 찾는다."""
+    return (
+        db.query(Document)
+        .join(KnowledgeGraph, KnowledgeGraph.document_id == Document.id)
+        .filter(
+            Document.file_hash == file_hash,
+            Document.status == "done",
+            KnowledgeGraph.reference_kg.isnot(None),
+        )
+        .order_by(Document.created_at.desc())
+        .first()
+    )
+
+
+def _copy_chunks(db: Session, source: Document, target: Document) -> int:
+    """캐시된 문서의 청크와 임베딩을 새 문서에 복사한다."""
+    copied = []
+    for chunk in sorted(source.chunks, key=lambda c: c.chunk_index):
+        embedding = chunk.embedding
+        copied.append(Chunk(
+            document_id=target.id,
+            content=chunk.content,
+            chunk_index=chunk.chunk_index,
+            page_number=chunk.page_number,
+            embedding=list(embedding) if embedding is not None else None,
+        ))
+
+    if copied:
+        db.add_all(copied)
+        db.commit()
+
+    return len(copied)
 
 
 @router.get("", response_model=List[DocumentStatusResponse])
@@ -69,6 +108,9 @@ async def upload_document(
     if len(file_bytes) > MAX_FILE_SIZE_BYTES:
         raise FileTooLargeError(max_mb=20)
 
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    cached_document = _find_cached_document(db, file_hash)
+
     # 2. 파일 저장
     file_path = save_uploaded_file(file_bytes, file.filename)
 
@@ -76,6 +118,7 @@ async def upload_document(
     document = Document(
         filename=file.filename,
         file_path=file_path,
+        file_hash=file_hash,
         status="processing",
     )
     db.add(document)
@@ -83,22 +126,29 @@ async def upload_document(
     db.refresh(document)
 
     try:
-        # 4. PDF 텍스트 추출 + 청킹
-        chunk_data_list = extract_and_chunk_pdf(file_path)
+        if cached_document:
+            # 같은 PDF는 기존 Reference KG를 재사용해 매 업로드마다 KG가 달라지는 것을 방지한다.
+            chunk_count = _copy_chunks(db, cached_document, document)
+            reference_kg = deserialize_kg(cached_document.knowledge_graph.reference_kg)
+            user_kg = init_user_kg(reference_kg)
+            save_kg_to_db(db, document.id, reference_kg, user_kg)
+        else:
+            # 4. PDF 텍스트 추출 + 청킹
+            chunk_data_list = extract_and_chunk_pdf(file_path)
 
-        # 5. 임베딩 생성 + DB 저장
-        chunk_count = embed_and_save_chunks(db, document, chunk_data_list)
+            # 5. 임베딩 생성 + DB 저장
+            chunk_count = embed_and_save_chunks(db, document, chunk_data_list)
 
-        # 6. Reference KG 생성 — 청크 텍스트만 추출해서 LLM에 전달
-        #    노드별 체크리스트 + Self-Consistency 적용된 v3.2 generator 사용
-        text_chunks = [c["content"] for c in chunk_data_list]
-        reference_kg = generate_reference_kg(text_chunks)
+            # 6. Reference KG 생성 — 청크 텍스트만 추출해서 LLM에 전달
+            #    노드별 체크리스트 + Self-Consistency 적용된 v3.2 generator 사용
+            text_chunks = [c["content"] for c in chunk_data_list]
+            reference_kg = generate_reference_kg(text_chunks)
 
-        # 7. User KG 초기화 — Reference KG의 모든 노드/엣지를 missing 상태로 복사
-        user_kg = init_user_kg(reference_kg)
+            # 7. User KG 초기화 — Reference KG의 모든 노드/엣지를 missing 상태로 복사
+            user_kg = init_user_kg(reference_kg)
 
-        # 8. KG DB 저장
-        save_kg_to_db(db, document.id, reference_kg, user_kg)
+            # 8. KG DB 저장
+            save_kg_to_db(db, document.id, reference_kg, user_kg)
 
         # 9. 완료 상태 업데이트
         document.status = "done"

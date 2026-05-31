@@ -39,3 +39,9 @@ def init_db():
     # Base에 등록된 모든 모델 테이블 생성
     from app.models import document, chunk, session_record, user  # noqa: F401 — 임포트로 모델 등록
     Base.metadata.create_all(bind=engine)
+
+    # 기존 개발 DB는 create_all만으로 새 컬럼이 추가되지 않으므로 보정한다.
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_file_hash ON documents (file_hash)"))
+        conn.commit()

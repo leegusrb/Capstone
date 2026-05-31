@@ -32,7 +32,10 @@ import sys
 
 from app.services.kg_service import RelationType, serialize_kg
 from app.services.reference_kg_generator import (
-    _generate_single_run,
+    KG_DEFAULT_MODEL,
+    _generate_detail_run,
+    _generate_node_candidate_run,
+    _merge_node_candidate_runs,
     generate_reference_kg,
 )
 
@@ -242,10 +245,12 @@ def validate_kg(graph, source_text: str) -> bool:
 # ──────────────────────────────────────────────
 
 def run_single_call(source_text: str) -> None:
-    """LLM 단일 호출 결과를 그대로 보여준다 (병합 X)."""
-    print_section("🔬 단일 호출 모드 (Self-Consistency 미적용)")
+    """단일 후보 호출 + 단일 상세 호출 결과를 보여준다 (병합 X)."""
+    print_section("🔬 단일 호출 모드 (후보 1회 + 상세 1회, Self-Consistency 미적용)")
 
-    result = _generate_single_run(source_text[:6000], model="gpt-4o-mini")
+    candidates = _generate_node_candidate_run(source_text[:6000], model=KG_DEFAULT_MODEL)
+    node_ids = _merge_node_candidate_runs([candidates], min_appearances=1)
+    result = _generate_detail_run(source_text[:6000], node_ids, model=KG_DEFAULT_MODEL)
     print(f"\n노드 {len(result.nodes)}개, 엣지 {len(result.edges)}개\n")
 
     for node in result.nodes:
@@ -337,6 +342,7 @@ def main() -> None:
     graph = generate_reference_kg(
         text_chunks,
         n_runs=args.runs,
+        min_appearances=args.min_appearances,
     )
 
     # ── 결과 출력 + 자동 검증 ────────────────────────────
