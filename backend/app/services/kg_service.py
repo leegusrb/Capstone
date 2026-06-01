@@ -272,6 +272,12 @@ def update_user_kg_from_evaluator(
             if status != NodeStatus.MISCONCEPTION:
                 status = NodeStatus.CONFIRMED if completion_ratio >= 1.0 else NodeStatus.PARTIAL
 
+            # confidence_level 누적: high > medium > low 우선순위로 최고값 유지
+            _CONF_PRIORITY = {"high": 2, "medium": 1, "low": 0}
+            new_conf = node.get("confidence_level", "low")
+            existing_conf = user_kg.nodes[node_id].get("confidence_level", "low")
+            if _CONF_PRIORITY.get(new_conf, 0) >= _CONF_PRIORITY.get(existing_conf, 0):
+                user_kg.nodes[node_id]["confidence_level"] = new_conf
             user_kg.nodes[node_id]["status"] = status
             user_kg.nodes[node_id]["checklist_result"] = checklist_result
             user_kg.nodes[node_id]["completion_ratio"] = completion_ratio
@@ -371,28 +377,6 @@ def update_best_scores(user_kg: nx.DiGraph, new_scores: dict) -> None:
     user_kg.nodes[_BEST_SCORES_NODE]["scores"] = {
         k: max(new_scores.get(k, 0), existing.get(k, 0))
         for k in _SCORE_KEYS
-    }
-
-
-_SPECIFICITY_NODE = "__specificity__"
-_SPECIFICITY_KEYS = ("example_present", "concrete_terms", "sentence_explained", "context_applied")
-
-
-def get_specificity_state(user_kg: nx.DiGraph) -> dict:
-    """누적된 구체성 체크리스트 상태를 반환한다."""
-    if _SPECIFICITY_NODE in user_kg:
-        return dict(user_kg.nodes[_SPECIFICITY_NODE].get("checklist", {}))
-    return {k: False for k in _SPECIFICITY_KEYS}
-
-
-def update_specificity_state(user_kg: nx.DiGraph, new_checklist: dict) -> None:
-    """구체성 체크리스트를 누적 업데이트한다. true는 한 번 달성되면 유지된다."""
-    if _SPECIFICITY_NODE not in user_kg:
-        user_kg.add_node(_SPECIFICITY_NODE, checklist={k: False for k in _SPECIFICITY_KEYS})
-    existing = user_kg.nodes[_SPECIFICITY_NODE].get("checklist", {})
-    user_kg.nodes[_SPECIFICITY_NODE]["checklist"] = {
-        k: new_checklist.get(k, False) or existing.get(k, False)
-        for k in _SPECIFICITY_KEYS
     }
 
 

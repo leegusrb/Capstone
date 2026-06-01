@@ -96,6 +96,8 @@ class TurnResponse(BaseModel):
 
 
 class EndSessionResponse(BaseModel):
+    scores:          dict
+    total:           int
     session_summary: dict
     closing_message: str
     coverage:        dict
@@ -219,6 +221,8 @@ def api_end_session(
     )
 
     return EndSessionResponse(
+        scores=result.scores,
+        total=result.total,
         session_summary=result.session_summary or {},
         closing_message=result.closing_message or "",
         coverage=result.coverage or {},

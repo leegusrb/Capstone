@@ -24,12 +24,10 @@ from app.services.kg_service import (
     get_best_scores,
     get_kg_coverage,
     get_missing_nodes,
-    get_specificity_state,
     get_student_context,
     load_kg_from_db,
     save_kg_to_db,
     update_best_scores,
-    update_specificity_state,
     update_user_kg_from_evaluator,
 )
 from app.services.evaluator_llm import (
@@ -179,23 +177,16 @@ def process_turn(
         "misconceptions":  eval_result.misconceptions,
     })
 
-    # ── 5. 구체성 체크리스트 누적 업데이트 ──
-    accumulated_specificity = get_specificity_state(user_kg)
-    merged_specificity = {
-        k: eval_result.specificity_checklist.get(k, False) or accumulated_specificity.get(k, False)
-        for k in set(accumulated_specificity) | set(eval_result.specificity_checklist)
-    }
-    update_specificity_state(user_kg, merged_specificity)
-
-    # ── 6. 업데이트된 KG 기반 루브릭 점수 계산 (구체성은 누적 체크리스트 사용) ──
-    scores = compute_rubric_scores(user_kg, reference_kg, merged_specificity)
+    # ── 5. 업데이트된 KG 기반 루브릭 점수 계산 ──
+    scores = compute_rubric_scores(user_kg, reference_kg)
 
     # 누적 보장: concept/accuracy/logic은 이전 최고 점수를 floor로 적용
+    # specificity는 노드별 confidence_level이 KG에 누적되므로 자체 보장
     scores = RubricScores(
         concept     = max(scores.concept,     best_scores.get("concept",     0)),
         accuracy    = max(scores.accuracy,    best_scores.get("accuracy",    0)),
         logic       = max(scores.logic,       best_scores.get("logic",       0)),
-        specificity = scores.specificity,  # KG 누적으로 자체 보장
+        specificity = scores.specificity,
     )
 
     # 갱신된 점수를 KG에 저장 (다음 세션 floor로 사용)
@@ -314,9 +305,7 @@ def end_session_early(
         raise ValueError(f"Document {document_id}의 KG가 존재하지 않습니다.")
     reference_kg, user_kg = kgs
 
-    # KG에 누적된 구체성 체크리스트로 점수 계산
-    accumulated_specificity = get_specificity_state(user_kg)
-    scores_obj = compute_rubric_scores(user_kg, reference_kg, accumulated_specificity)
+    scores_obj = compute_rubric_scores(user_kg, reference_kg)
     coverage = get_kg_coverage(user_kg, reference_kg)
 
     summary = build_session_summary(
