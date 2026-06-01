@@ -3,24 +3,16 @@ import { useState } from 'react';
 function splitLabel(label) {
   const text = String(label || '');
   if (!text) return [''];
-  if (text.includes(' ')) {
-    return text.split(/\s+/).filter(Boolean).slice(0, 3);
-  }
-
-  const chunks = [];
-  for (let i = 0; i < text.length; i += 6) {
-    chunks.push(text.slice(i, i + 6));
-  }
-  return chunks.slice(0, 3);
+  return [text.length > 10 ? text.slice(0, 10) + '…' : text];
 }
 
 function NodeLabel({ label, r, fill, fontWeight }) {
   const lines = splitLabel(label);
   return (
-    <text textAnchor="middle" fill={fill} fontSize={13}
+    <text textAnchor="middle" fill={fill} fontSize={22}
       fontFamily="Inter,sans-serif" fontWeight={fontWeight}>
       {lines.map((line, i) => (
-        <tspan key={i} x={0} y={r + 16 + i * 15}>{line}</tspan>
+        <tspan key={i} x={0} y={r + 33 + i * 19}>{line}</tspan>
       ))}
     </text>
   );
@@ -42,9 +34,9 @@ const STATUS_STROKE = {
 };
 
 // 레이블이 노드 중심에서 벗어나는 여백
-const LBL_X   = 76;  // 좌우 (레이블 최대 폭의 절반)
-const LBL_TOP = 26;  // 위
-const LBL_BOT = 82;  // 아래 (최대 3줄 레이블 + 여유)
+const LBL_X   = 86;  // 좌우 (레이블 최대 폭의 절반)
+const LBL_TOP = 34;  // 위
+const LBL_BOT = 62;  // 아래 (1줄 레이블 + 여유)
 
 export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);
@@ -61,15 +53,15 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
     vbX = minX - LBL_X;
     vbY = minY - LBL_TOP;
     vbW = Math.max(maxX - minX + LBL_X * 2, width);
-    vbH = maxY - minY + LBL_TOP + LBL_BOT;
+    vbH = Math.max(maxY - minY + LBL_TOP + LBL_BOT, height);
   }
 
   return (
     <svg
-      width={width} height={height}
+      width="100%"
       viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
       preserveAspectRatio="xMidYMid meet"
-      style={{ overflow: 'visible' }}
+      style={{ display: 'block', maxHeight: '280px' }}
     >
       <defs>
         <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
@@ -106,7 +98,7 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
         const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
         const isHov = hovered === n.id;
         const isSel = selectedNodeId === n.id;
-        const r = 20;
+        const r = 26;
         return (
           <g key={n.id} transform={`translate(${n.x},${n.y})`}
             onMouseEnter={() => setHovered(n.id)}

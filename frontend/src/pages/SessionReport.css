@@ -36,15 +36,15 @@
 .meta-row strong { color: #0f172a; font-weight: 700; }
 
 /* KG compare */
-.kg-compare-row { display: flex; align-items: center; gap: 16px; }
-.kg-cmp { flex: 1; }
+.kg-compare-row { display: flex; align-items: flex-start; gap: 16px; }
+.kg-cmp { flex: 1; min-width: 0; }
 .cmp-badge {
   display: inline-block; font-size: 11px; font-weight: 700;
   letter-spacing: 0.08em; padding: 3px 10px; border-radius: 4px; margin-bottom: 12px;
 }
 .cmp-badge.before { background: #f1f5f9; color: #64748b; }
 .cmp-badge.after  { background: #ecfdf5; color: #059669; }
-.kg-bg { background: #f8faff; border-radius: 10px; padding: 16px; display: flex; justify-content: center; overflow-x: auto; }
+.kg-bg { background: #f8faff; border-radius: 10px; padding: 12px; overflow: hidden; }
 .cmp-arrow { font-size: 24px; color: #cbd5e1; flex-shrink: 0; }
 .kg-legend { display: flex; gap: 12px; margin-top: 10px; }
 .kl { font-size: 11px; font-weight: 600; }
