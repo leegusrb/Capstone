@@ -18,6 +18,7 @@ class Document(Base):
 
     filename  = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
+    file_hash = Column(String(64), nullable=True, index=True)
 
     # 업로드 상태: pending / processing / done / failed
     status = Column(String(20), nullable=False, default="pending")

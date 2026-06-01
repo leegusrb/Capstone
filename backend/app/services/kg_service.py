@@ -107,11 +107,21 @@ _ALLOWED_RELATIONS: set[str] = {rt.value for rt in RelationType}
 def serialize_kg(graph: nx.DiGraph) -> dict:
     """NetworkX DiGraph → JSON 저장 가능한 dict 변환. 모든 노드/엣지 속성 보존."""
     nodes = []
-    for node_id, attrs in graph.nodes(data=True):
+    for node_id, attrs in sorted(
+        graph.nodes(data=True),
+        key=lambda item: str(item[0]),
+    ):
         nodes.append({"id": node_id, **attrs})
 
     edges = []
-    for src, tgt, attrs in graph.edges(data=True):
+    for src, tgt, attrs in sorted(
+        graph.edges(data=True),
+        key=lambda item: (
+            str(item[0]),
+            str(item[2].get("relation", "")),
+            str(item[1]),
+        ),
+    ):
         edges.append({"source": src, "target": tgt, **attrs})
 
     return {"nodes": nodes, "edges": edges}

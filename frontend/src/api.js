@@ -104,8 +104,19 @@ export function layoutKGNodes(nodes, edges, width, height) {
 
   // ── Centered subtree x 배치 ─────────────────────────────
   // DFS로 리프에 순차 인덱스 부여 → 부모는 자식 인덱스의 중앙에 위치
-  const MIN_SPACING = 50; // 리프 노드 간 최소 간격(px)
-  const padX = 38, padY = 38;
+  const estimateLabelWidth = (label) => {
+    const text = String(label || '');
+    if (!text) return 0;
+    if (text.includes(' ')) {
+      return Math.max(...text.split(/\s+/).map(part => part.length)) * 12;
+    }
+    return Math.min(text.length, 6) * 13;
+  };
+
+  const maxLabelWidth = Math.max(...nodes.map(n => estimateLabelWidth(n.id)), 72);
+  const MIN_SPACING = Math.max(118, maxLabelWidth + 42); // 라벨 폭 + 여유
+  const padX = Math.max(64, Math.ceil(MIN_SPACING / 2));
+  const padY = 46;
 
   let leafIdx = 0;
   const xIdx = {};         // 노드별 수평 인덱스 (소수 가능)
@@ -135,26 +146,31 @@ export function layoutKGNodes(nodes, edges, width, height) {
   // 미방문 노드(고립) 처리
   ids.forEach(id => { if (xIdx[id] === undefined) xIdx[id] = leafIdx++; });
 
-  // 자연 간격으로 배치 — KnowledgeGraph의 viewBox가 박스 안에 맞게 스케일링
-  const VERT_GAP = 130;
+  // 수평: 리프 수 기반 동적 확장 / 수직: 레벨당 고정 간격
+  const VERT_GAP = 150;
+  const totalLeaves = Math.max(leafIdx, 1);
+  const effW = Math.max(width,  padX * 2 + (totalLeaves - 1) * MIN_SPACING);
+  const effH = Math.max(height, padY * 2 + maxLevel * VERT_GAP);
 
   const pos = {};
   ids.forEach(id => {
     const lx = padX + xIdx[id] * MIN_SPACING;
     const ly = maxLevel === 0
-      ? 0
-      : padY + (level[id] / maxLevel) * maxLevel * VERT_GAP;
+      ? effH / 2
+      : padY + level[id] * VERT_GAP;
     pos[id] = { x: Math.round(lx), y: Math.round(ly) };
   });
 
-  return nodes.map(n => ({
+  const layoutNodes = nodes.map(n => ({
     id: n.id,
     label: n.id,
-    x: pos[n.id]?.x ?? Math.round(width / 2),
-    y: pos[n.id]?.y ?? Math.round(height / 2),
+    x: pos[n.id]?.x ?? Math.round(effW / 2),
+    y: pos[n.id]?.y ?? Math.round(effH / 2),
     status: n.status || 'missing',
     checklist: n.checklist || [],
   }));
+
+  return { nodes: layoutNodes, width: Math.ceil(effW), height: Math.ceil(effH) };
 }
 
 export function convertEdges(edges) {

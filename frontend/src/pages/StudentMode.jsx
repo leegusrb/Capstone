@@ -22,10 +22,38 @@ export default function StudentMode() {
   const [typing, setTyping] = useState(false);
   const [aiIdx, setAiIdx] = useState(0);
   const chatRef = useRef();
+  const recognitionRef = useRef(null);
+  const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages, typing]);
+
+  function toggleVoice() {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      alert('이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.');
+      return;
+    }
+    const recognition = new SR();
+    recognition.lang = 'ko-KR';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onstart = () => setIsRecording(true);
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      setInput(prev => prev ? prev + ' ' + transcript : transcript);
+    };
+    recognition.onend = () => setIsRecording(false);
+    recognition.onerror = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+  }
 
   function send() {
     if (!input.trim()) return;
@@ -93,6 +121,13 @@ export default function StudentMode() {
             onKeyDown={e => { if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); } }}
             rows={2}
           />
+          <button
+            className={`mic-btn${isRecording ? ' recording' : ''}`}
+            onClick={toggleVoice}
+            title={isRecording ? '음성 입력 중단' : '음성으로 입력'}
+          >
+            {isRecording ? '⏹' : '🎙️'}
+          </button>
           <button className="btn btn-primary send-btn" onClick={send} disabled={!input.trim()}>
             전송
           </button>

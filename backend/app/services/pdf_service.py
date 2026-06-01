@@ -14,7 +14,7 @@ import os
 import re
 from typing import List, Tuple
 
-import PyPDF2
+import fitz
 
 from app.config import settings
 
@@ -28,10 +28,11 @@ def extract_text_from_pdf(file_path: str) -> List[Tuple[int, str]]:
     """
     pages: List[Tuple[int, str]] = []
 
-    with open(file_path, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
+    with fitz.open(file_path) as doc:
+        for i, page in enumerate(doc):
+            # "text" 모드: 줄바꿈·공백 포함 일반 텍스트 추출
+            # "blocks" 모드도 있으나 텍스트 추출 단순 목적엔 "text"로 충분
+            text = page.get_text("text") or ""
             text = _clean_text(text)
             if text:
                 pages.append((i + 1, text))

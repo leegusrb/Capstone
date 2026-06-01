@@ -19,17 +19,17 @@ export default function UploadAnalysis() {
   const [error, setError] = useState('');
   const [kgNodes, setKgNodes] = useState([]);
   const [kgEdges, setKgEdges] = useState([]);
-  const [docInfo, setDocInfo] = useState(null); // { id, filename, chunk_count }
+  const [kgDims, setKgDims]   = useState({ width: 560, height: 420 });
+  const [docInfo, setDocInfo] = useState(null);
   const fileRef = useRef();
 
   async function startAnalysis(file) {
-    if (phase !== 'idle') return; // 이중 실행 방지
+    if (phase !== 'idle') return;
     setFileName(file.name);
     setPhase('processing');
     setStep(1);
     setError('');
 
-    // 단계 애니메이션 (업로드 완료 전까지 2, 3단계를 순차적으로 표시)
     const t1 = setTimeout(() => setStep(2), 4000);
     const t2 = setTimeout(() => setStep(3), 10000);
 
@@ -37,16 +37,17 @@ export default function UploadAnalysis() {
       const uploaded = await api.uploadDocument(file);
       clearTimeout(t1);
       clearTimeout(t2);
-      setStep(3); // 완료 직전 3단계로
+      setStep(3);
 
-      // KG 데이터 가져오기
       const kgData = await api.getKG(uploaded.id);
       const refNodes = kgData.reference_kg?.nodes || [];
       const refEdges = kgData.reference_kg?.edges || [];
 
       setDocInfo({ id: uploaded.id, filename: uploaded.filename, chunk_count: uploaded.chunk_count });
       setKgEdges(convertEdges(refEdges));
-      setKgNodes(layoutKGNodes(refNodes, refEdges, 560, 420));
+      const laid = layoutKGNodes(refNodes, refEdges, 560, 420);
+      setKgNodes(laid.nodes);
+      setKgDims({ width: laid.width, height: laid.height });
       setPhase('done');
     } catch (e) {
       clearTimeout(t1);
@@ -96,7 +97,7 @@ export default function UploadAnalysis() {
           </div>
           <div className="sample-hint">
             <span className="tag tag-gray">💡 예시</span>
-            <span>TCP/IP 교재, OS 강의자료, 데이터베이스 논문 등 어떤 기술 문서도 가능합니다.</span>
+            <span>OS 강의자료, 네트워크 교재, 데이터베이스 논문 등 어떤 기술 문서도 가능합니다.</span>
           </div>
         </div>
       )}
@@ -129,6 +130,9 @@ export default function UploadAnalysis() {
                   </div>
                 );
               })}
+              <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 16 }}>
+                KG 생성은 30~60초 소요될 수 있습니다.
+              </p>
             </div>
             <div className="card processing-placeholder">
               <div className="card-label">KG 생성 중...</div>
@@ -167,7 +171,7 @@ export default function UploadAnalysis() {
                 </div>
               </div>
               <div className="kg-bg">
-                <KnowledgeGraph nodes={kgNodes} edges={kgEdges} width={560} height={420} />
+                <KnowledgeGraph nodes={kgNodes} edges={kgEdges} width={kgDims.width} height={kgDims.height} />
               </div>
             </div>
 
