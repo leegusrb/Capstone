@@ -25,7 +25,7 @@ function RadarChart({ scores }) {
   const n = entries.length;
   const pts = entries.map(([, val], i) => {
     const angle = (i / n) * 2 * Math.PI - Math.PI / 2;
-    const ratio = val / 3; // 0~3 스케일
+    const ratio = val / 3;
     return {
       x: cx + Math.cos(angle) * r * ratio,
       y: cy + Math.sin(angle) * r * ratio,
@@ -79,14 +79,15 @@ export default function SessionReport() {
   const totalPct = Math.round((total / 12) * 100);
   const passed = totalPct >= 70;
 
-  const [afterNodes, setAfterNodes]   = useState([]);
-  const [afterEdges, setAfterEdges]   = useState([]);
-  const [kgDims, setKgDims]           = useState({ width: 420, height: 310 });
+  const [afterNodes, setAfterNodes] = useState([]);
+  const [afterEdges, setAfterEdges] = useState([]);
+  const [kgDims, setKgDims]         = useState({ width: 420, height: 310 });
   const [selectedNode, setSelectedNode] = useState(null);
+  const [kgLoading, setKgLoading]   = useState(true);
   const checklistRef = useRef(null);
 
   useEffect(() => {
-    if (!document_id) return;
+    if (!document_id) { setKgLoading(false); return; }
     api.getUserKG(document_id).then(data => {
       const nodes = data.user_kg?.nodes || [];
       const edges = data.user_kg?.edges || [];
@@ -94,10 +95,9 @@ export default function SessionReport() {
       const laid = layoutKGNodes(nodes, edges, 420, 310);
       setAfterNodes(laid.nodes);
       setKgDims({ width: laid.width, height: laid.height });
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setKgLoading(false));
   }, [document_id]);
 
-  // BEFORE: 동일 노드를 모두 missing으로
   const beforeNodes = afterNodes.map(n => ({ ...n, status: 'missing' }));
 
   const rubricScores = Object.entries(scores)
@@ -167,32 +167,36 @@ export default function SessionReport() {
       {/* 2. KG 비교 */}
       <section>
         <h2 className="section-title">지식 그래프 비교</h2>
-        <div className="kg-compare-row">
-          <div className="card kg-cmp">
-            <div className="cmp-badge before">BEFORE</div>
-            <div className="kg-bg">
-              <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height} />
+        {kgLoading ? (
+          <p style={{ color: '#94a3b8', fontSize: 13 }}>KG 불러오는 중...</p>
+        ) : (
+          <div className="kg-compare-row">
+            <div className="card kg-cmp">
+              <div className="cmp-badge before">BEFORE</div>
+              <div className="kg-bg">
+                <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height} />
+              </div>
+            </div>
+            <div className="cmp-arrow">→</div>
+            <div className="card kg-cmp">
+              <div className="cmp-badge after">AFTER</div>
+              <div className="kg-bg">
+                <KnowledgeGraph
+                  nodes={afterNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height}
+                  onNodeClick={handleNodeClick}
+                  selectedNodeId={selectedNode?.id}
+                />
+              </div>
+              <div className="kg-legend">
+                <span className="kl green">● Confirmed</span>
+                <span className="kl yellow">● Partial</span>
+                <span className="kl red">● Misconception</span>
+                <span className="kl gray">● Missing</span>
+              </div>
+              <p className="kg-click-hint">💡 노드를 클릭하면 체크리스트를 확인할 수 있습니다</p>
             </div>
           </div>
-          <div className="cmp-arrow">→</div>
-          <div className="card kg-cmp">
-            <div className="cmp-badge after">AFTER</div>
-            <div className="kg-bg">
-              <KnowledgeGraph
-                nodes={afterNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height}
-                onNodeClick={handleNodeClick}
-                selectedNodeId={selectedNode?.id}
-              />
-            </div>
-            <div className="kg-legend">
-              <span className="kl green">● Confirmed</span>
-              <span className="kl yellow">● Partial</span>
-              <span className="kl red">● Misconception</span>
-              <span className="kl gray">● Missing</span>
-            </div>
-            <p className="kg-click-hint">💡 노드를 클릭하면 체크리스트를 확인할 수 있습니다</p>
-          </div>
-        </div>
+        )}
 
         <div className="node-checklist-panel" ref={checklistRef}>
           {selectedNode ? (

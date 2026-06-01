@@ -166,5 +166,28 @@
 .ncp-item-text { font-size: 13px; font-weight: 500; color: #0f172a; line-height: 1.55; }
 .ncp-item-quote { font-size: 11px; color: #94a3b8; font-style: italic; line-height: 1.55; }
 
+/* Page indexing slot */
+.ncp-page-slot {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: flex; align-items: center;
+}
+.ncp-page-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 15px; padding: 2px 4px; border-radius: 4px;
+  opacity: 0.5; transition: opacity 0.15s, transform 0.15s;
+  line-height: 1;
+}
+.ncp-page-btn:hover { opacity: 1; transform: scale(1.15); }
+.ncp-page-loading {
+  font-size: 11px; color: #94a3b8; letter-spacing: 2px;
+}
+.ncp-page-badge {
+  font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px;
+  background: #eef2ff; color: #4f6ef7;
+  white-space: nowrap;
+}
+
 /* Footer */
 .report-footer { display: flex; gap: 12px; justify-content: flex-end; padding-bottom: 16px; }
