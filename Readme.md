@@ -102,7 +102,8 @@ AI는 답을 주는 튜터가 아닌, **해당 주제에 대해 진짜로 아무
 [사전 준비] — 자료 업로드 시 1회 실행
 PDF 업로드 → 텍스트 추출(NUL 바이트 정리) → 전체 문서 단위 슬라이딩 윈도우 청킹
 → 임베딩 생성 (배치 100개, 재시도 3회, pgvector 저장)
-→ Reference KG 생성 (Self-Consistency 3회 호출 + 합집합 병합)
+→ Reference KG 생성 (노드 후보 3회 추출 + consensus 병합 → 확정 노드 기반 상세 생성)
+→ 동일 PDF 해시가 있으면 기존 Reference KG 재사용
 → User KG 초기화 (모든 노드가 missing 상태)
 
 [실시간 학습] — 매 턴 반복
@@ -168,16 +169,32 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 |---|---|---|
 | **1. 인용 강제 (제약 프롬프트)** | 체크리스트 항목마다 RAG 청크 원문 `source_quote` 출력 강제, 인용 누락 항목은 자동 폐기 | LLM 임의 생성·환각 차단 |
 | **2. 팀 교차 검토** | 생성된 KG를 팀에서 정성적으로 점검 (코드 외 영역) | 도메인 적합성 검증 |
-| **3. Self-Consistency (합집합 병합)** | 동일 청크에 대해 `temperature=0.2`로 3회 호출 후 합집합 병합, 노드 ID 정규화로 표기 차이 흡수 | 호출 간 변동성 흡수, 재현율 향상 |
+| **3. 단계 분리형 Self-Consistency** | 노드 후보만 3회 추출한 뒤 과반수 consensus로 확정 노드 목록을 고정하고, 그 목록 안에서만 엣지·체크리스트 생성 | 노드명·엣지 endpoint 흔들림 완화 |
 
-> Self-Consistency의 일반적 구현은 다수결(majority vote)이지만, 본 프로젝트는 **합집합(union)** 정책을 채택했습니다.
-> 방어선 1(인용 강제)이 이미 환각을 차단하므로, KG 생성 단계에서는 **정확도보다 재현율(누락 없음)을 우선**하는 것이 평가 품질에 더 유리하기 때문입니다.
+### 단계 분리형 Reference KG 생성
+
+기존에는 LLM이 `노드 + 엣지 + 체크리스트 + 계층 구조`를 한 번에 생성했기 때문에,
+같은 자료라도 노드명이나 엣지 endpoint가 달라질 수 있었습니다.
+현재는 다음과 같이 생성 단계를 분리해 Reference KG의 일관성을 높였습니다.
+
+```
+PDF 청크 텍스트
+→ 노드 후보만 3회 추출
+→ 노드 ID 정규화 + 과반수 consensus로 최종 노드 목록 확정
+→ 확정된 노드 목록 안에서만 체크리스트·엣지 생성
+→ 목록 밖 노드/엣지 endpoint 자동 폐기
+→ 후처리 + 루트 연결 + 정렬 저장
+```
+
+또한 PDF 파일의 SHA-256 해시를 저장해, 같은 PDF가 재업로드되면 기존 Reference KG를 재사용합니다.
+따라서 동일 자료를 반복 업로드해도 기준 그래프가 다시 생성되며 달라지는 문제를 방지합니다.
 
 ### 추가 후처리
 
 - **묶음 노드 체크리스트 정리**: 노드 A의 체크리스트가 다른 노드 B를 평가하는 메타 항목이면 자동 폐기 (한국어 단어 경계 매칭 + 안전장치 4종 적용)
 - **자기 자신 엣지 폐기**: `source == target` 엣지는 의미 없으므로 제거
 - **체크리스트 0개 노드 폐기**: 평가 불가능하므로 제거
+- **직렬화 순서 고정**: 노드·엣지를 정렬해 JSON 저장 결과를 안정화
 
 ---
 
@@ -217,7 +234,7 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 | **Frontend** | React 19 + Vite 7 |
 | **Backend** | FastAPI (Python 3.10+), SQLAlchemy |
 | **Database** | PostgreSQL + pgvector |
-| **AI** | OpenAI SDK v1.x (`gpt-4o-mini`, `text-embedding-3-small`) |
+| **AI** | OpenAI SDK v1.x (`gpt-5.4-mini-2026-03-17`, `text-embedding-3-small`) |
 | **Knowledge Graph** | NetworkX |
 | **PDF 처리** | PyPDF2 |
 | **Containerization** | Docker Compose (`pgvector/pgvector:pg16`) |
@@ -248,12 +265,12 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 │   │   │   ├── embedding_service.py       # 임베딩 생성 (배치 100, 재시도 3회)
 │   │   │   ├── rag_service.py             # pgvector 코사인 유사도 검색
 │   │   │   ├── kg_service.py              # KG 관리 + RelationType 정의
-│   │   │   ├── reference_kg_generator.py  # Self-Consistency 기반 Reference KG 생성
+│   │   │   ├── reference_kg_generator.py  # 단계 분리형 Self-Consistency 기반 Reference KG 생성
 │   │   │   ├── evaluator_llm.py           # Evaluator LLM 에이전트
 │   │   │   ├── student_llm.py             # Student LLM 에이전트
 │   │   │   └── session_service.py         # 2-에이전트 세션 오케스트레이터 + 세션 자동 저장
 │   │   ├── models/
-│   │   │   ├── document.py                # Document SQLAlchemy 모델
+│   │   │   ├── document.py                # Document SQLAlchemy 모델 + PDF 해시 캐시 키
 │   │   │   ├── chunk.py                   # Chunk + pgvector 임베딩 모델
 │   │   │   ├── knowledge_graph.py         # KnowledgeGraph 모델 (reference/user KG)
 │   │   │   ├── session_record.py          # SessionRecord 모델 (세션 이력)
@@ -264,7 +281,8 @@ LLM 기반 KG 생성의 품질·일관성·환각 문제를 막기 위해 **3중
 │   └── tests/
 │       ├── test_pdf_service.py
 │       ├── test_kg_service.py
-│       └── test_reference_kg_generation.py
+│       ├── test_reference_kg_generation.py
+│       └── test_reference_kg_generator_staged.py
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx                        # 라우팅 설정
@@ -347,9 +365,12 @@ npm run dev
   - [x] 체크리스트 met/unmet 데이터는 세션 종료 시점에만 노출
 - [x] Reference KG 생성기 (`reference_kg_generator.py`)
   - [x] 방어선 1 — `source_quote` 인용 강제
-  - [x] 방어선 3 — Self-Consistency 3회 호출 + 합집합 병합
+  - [x] 방어선 3 — 노드 후보 3회 호출 + consensus 병합
+  - [x] 확정 노드 목록 기반 엣지·체크리스트 생성
+  - [x] 목록 밖 노드/엣지 endpoint 자동 폐기
   - [x] 묶음 노드 체크리스트 후처리 (한국어 단어 경계 매칭)
   - [x] 자기 자신 엣지 폐기
+  - [x] PDF SHA-256 해시 기반 Reference KG 캐시
 - [x] Evaluator LLM (`evaluator_llm.py` — 루브릭 채점 + User KG 업데이트)
 - [x] Student LLM (`student_llm.py` — 정보 격리 기반 질문 생성)
 - [x] 2-에이전트 세션 오케스트레이터 (`session_service.py`)
@@ -368,10 +389,10 @@ npm run dev
 
 **프론트엔드**
 - [x] 전체 페이지 UI 구현 (MainPage, UploadAnalysis, TeacherMode, StudentMode, SessionReport, MyArchive, Register)
-- [x] KG 시각화 컴포넌트 (`KnowledgeGraph.jsx`) — centered subtree 트리 레이아웃, 2줄 레이블
+- [x] KG 시각화 컴포넌트 (`KnowledgeGraph.jsx`) — centered subtree 트리 레이아웃, 긴 한글 레이블 줄바꿈
 - [x] 커버리지 도넛 차트 (`DonutChart.jsx`)
 - [x] 인증 컨텍스트 (`AuthContext.jsx`)
-- [x] API 유틸리티 (`api.js`) — 공통 fetch 래퍼, KG 레이아웃/엣지 변환 함수
+- [x] API 유틸리티 (`api.js`) — 공통 fetch 래퍼, KG 레이아웃/엣지 변환, 라벨 폭 기반 노드 간격 계산
 
 **프론트엔드 ↔ 백엔드 연동**
 - [x] UploadAnalysis — 실제 PDF 업로드 + Reference KG 시각화
