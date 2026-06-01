@@ -1,344 +1,567 @@
-import { useNavigate } from 'react-router-dom';
-import './MainPage.css';
+import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import "./MainPage.css";
 
-/* ── 지금까지의 문제 ── */
-const PROBLEMS = [
-  {
-    icon: '🤖',
-    title: 'AI가 이미 다 알고 있어요',
-    desc: '기존 AI 튜터는 "모르는 척"하지만, 사실 모든 답을 알고 있습니다. 학습자는 그냥 정답을 확인하는 셈이에요.',
-  },
-  {
-    icon: '💬',
-    title: '대화는 끝나면 사라집니다',
-    desc: '매 세션이 독립적이라 오늘 배운 것이 내일 세션에 반영되지 않습니다. 항상 처음부터 시작해야 해요.',
-  },
-  {
-    icon: '❓',
-    title: '뭘 모르는지 모릅니다',
-    desc: '공부를 마쳐도 어떤 개념이 부족한지, 어디서 오개념이 생겼는지 정량적으로 확인할 방법이 없어요.',
-  },
-  {
-    icon: '📝',
-    title: '이해했는지 확인이 주관적',
-    desc: '스스로 "이해했다"고 느끼는 것과 실제로 설명할 수 있는 것은 다릅니다. 객관적 기준이 필요합니다.',
-  },
+function useReveal() {
+  useEffect(() => {
+    const io = new IntersectionObserver(
+      (entries) =>
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add("in");
+            io.unobserve(e.target);
+          }
+        }),
+      { threshold: 0.07, rootMargin: "0px 0px -40px 0px" },
+    );
+    document.querySelectorAll(".rv").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+}
+
+const PAIN_ITEMS = [
+  { e: "📖", t: "강의를 다 읽었는데\n막상 시험에서 막혔다" },
+  { e: "🗣️", t: "설명하려니\n갑자기 말이 안 나왔다" },
+  { e: "❓", t: "열심히 했는데\n뭘 모르는지조차 몰랐다" },
 ];
 
-/* ── 우리의 차별점 ── */
-const DIFFS = [
+const CHAT_MSGS = [
+  { r: "ai", t: "TCP에 대해 설명해주실 수 있나요?" },
   {
-    label: 'AI가 진짜로 모릅니다',
-    before: '기존: LLM이 모르는 척 — 사실 답을 알고 있음',
-    after:  '우리: 컨텍스트 단계에서 차단 — Student AI가 진짜 무지 상태로 시작',
-    color:  '#22d3ee',
+    r: "user",
+    t: "TCP는 연결 지향 프로토콜로, 신뢰성 있는 데이터 전송을 보장합니다.",
   },
   {
-    label: '이해도가 누적됩니다',
-    before: '기존: 매 세션 독립, 오늘 배운 것 내일에 반영 안 됨',
-    after:  '우리: Knowledge Graph가 세션을 넘어 이해도를 지속 추적',
-    color:  '#4ade80',
+    r: "ai",
+    t: "연결 지향이 구체적으로 어떤 의미인지 더 설명해주실 수 있나요?",
   },
-  {
-    label: '학습자료 기반 평가',
-    before: '기존: 평가 기준 없음 또는 주관적',
-    after:  '우리: 업로드한 PDF 기반 루브릭 — 정확성·논리성·구체성 자동 채점',
-    color:  '#a855f7',
-  },
-  {
-    label: '설명이 학습이 됩니다',
-    before: '기존: 읽고 → 이해한 척 → 다음 챕터',
-    after:  '우리: 페인만 기법 — AI에게 설명하면서 진짜 이해를 검증',
-    color:  '#fb7185',
-  },
+  { r: "user", t: "..." },
 ];
 
-/* ── 작동 방식 (3단계) ── */
-const HOW = [
-  {
-    step: '01',
-    icon: '📄',
-    title: 'PDF를 업로드하세요',
-    desc:  '학습 자료를 올리면 AI가 핵심 개념 지식 그래프(Reference KG)를 자동 생성합니다. 어떤 개념을, 어느 정도 이해해야 하는지 기준이 만들어집니다.',
-  },
-  {
-    step: '02',
-    icon: '🗣️',
-    title: 'AI 학생에게 설명하세요',
-    desc:  '진짜로 아무것도 모르는 AI 학생에게 개념을 직접 설명합니다. 막히는 부분이 생기면 그게 바로 당신이 아직 이해하지 못한 부분입니다.',
-  },
-  {
-    step: '03',
-    icon: '📊',
-    title: '이해도를 확인하세요',
-    desc:  '설명이 끝나면 Knowledge Graph 커버리지, 루브릭 점수, 오개념 목록을 한눈에 볼 수 있습니다. 다음 세션에서 부족한 부분을 채워나갑니다.',
-  },
-];
-
-/* ── KG 상태 ── */
-const KG_STATES = [
-  { color: '#4ade80', neon: 'rgba(74,222,128,0.35)',  label: 'Confirmed',     desc: '충분히 설명됨' },
-  { color: '#fbbf24', neon: 'rgba(251,191,36,0.35)',   label: 'Partial',       desc: '부분적으로 설명됨' },
-  { color: '#f87171', neon: 'rgba(248,113,113,0.35)',  label: 'Misconception', desc: '오개념 발견' },
-  { color: '#475569', neon: 'rgba(71,85,105,0.2)',     label: 'Missing',       desc: '아직 언급 안 됨' },
-];
+const KG_DATA = {
+  edges: [
+    [118, 28, 52, 102],
+    [118, 28, 188, 102],
+    [52, 102, 52, 166],
+    [188, 102, 188, 166],
+  ],
+  nodes: [
+    [118, 28, "TCP", "#4f6ef7", 0],
+    [52, 102, "흐름제어", "#4f6ef7", 0.5],
+    [188, 102, "혼잡제어", "#f59e0b", 1.0],
+    [52, 166, "슬라이딩", "#475569", 1.5],
+    [188, 166, "ACK", "#ef4444", 2.0],
+  ],
+};
 
 export default function MainPage() {
   const navigate = useNavigate();
+  useReveal();
 
   return (
-    <div className="main-page fade-in">
-
-      {/* ════ HERO ════ */}
-      <section className="mp-hero">
-        <div className="mp-hero-glow mp-hero-glow-1" />
-        <div className="mp-hero-glow mp-hero-glow-2" />
-        <div className="mp-hero-glow mp-hero-glow-3" />
-
-        <div className="mp-hero-inner">
-          <div className="mp-hero-badge">
-            <span className="mp-badge-dot" />
-            2024 캡스톤디자인 · 페인만 기법 기반 자기주도학습
+    <div className="mp">
+      {/* ══ HERO (dark) ════════════════════════════ */}
+      <section className="hero">
+        <div className="hero-orb o1" />
+        <div className="hero-orb o2" />
+        <div className="hero-grid">
+          <div className="hero-left">
+            <div className="hero-enter" style={{ "--d": "0ms" }}>
+              <span className="eyebrow-pill">
+                🎓 페인만 기법 기반 학습 서비스
+              </span>
+            </div>
+            <h1 className="hero-h1 hero-enter" style={{ "--d": "80ms" }}>
+              설명할 수 있어야
+              <br />
+              <span className="hero-em">진짜 아는 겁니다</span>
+            </h1>
+            <p className="hero-sub hero-enter" style={{ "--d": "160ms" }}>
+              AI 학생에게 직접 개념을 설명하세요.
+              <br />
+              말하면서 내 빈틈이 보입니다.
+            </p>
+            <div className="hero-btns hero-enter" style={{ "--d": "220ms" }}>
+              <button className="btn-start" onClick={() => navigate("/upload")}>
+                지금 시작하기 <span className="btn-arr">→</span>
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={() => navigate("/archive")}
+              >
+                나의 저장소
+              </button>
+            </div>
           </div>
 
-          <h1 className="mp-hero-title">
-            AI 학생에게 설명하며<br />
-            <span className="mp-hero-shimmer">진짜 이해</span>를 확인하세요
-          </h1>
-
-          <p className="mp-hero-sub">
-            읽고 끄덕이는 것과 설명할 수 있는 것은 다릅니다.<br />
-            Knowledge Graph가 당신의 이해도를 세션마다 추적합니다.
-          </p>
-
-          <div className="mp-hero-actions">
-            <button className="mp-btn-primary" onClick={() => navigate('/upload')}>
-              지금 시작하기 →
-            </button>
-            <button className="mp-btn-ghost" onClick={() => navigate('/report')}>
-              예시 리포트 보기
-            </button>
-          </div>
-        </div>
-
-        {/* 플로팅 KG 프리뷰 */}
-        <div className="mp-hero-card">
-          <div className="mp-hero-card-label">이해도 Knowledge Graph</div>
-          <svg width="280" height="210" viewBox="0 0 280 210">
-            <defs>
-              <filter id="glow-h"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-            </defs>
-            {[[140,24,70,82],[140,24,210,82],[70,82,42,158],[70,82,140,158],[210,82,140,158],[210,82,238,158]].map(([x1,y1,x2,y2],i)=>(
-              <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(255,255,255,0.12)" strokeWidth="1.5" strokeDasharray={i>=4?"5 4":""}/>
-            ))}
-            {[
-              [140,24,'TCP/IP','#22d3ee'],
-              [70,82,'흐름제어','#4ade80'],
-              [210,82,'3-way HS','#4ade80'],
-              [42,158,'슬라이딩','#fbbf24'],
-              [140,158,'혼잡제어','#475569'],
-              [238,158,'포트번호','#475569'],
-            ].map(([x,y,label,color])=>(
-              <g key={String(label)}>
-                <circle cx={x} cy={y} r={22} fill={color} opacity={0.15}/>
-                <circle cx={x} cy={y} r={15} fill={color} opacity={0.9} filter="url(#glow-h)"/>
-                <text x={x} y={Number(y)+4} textAnchor="middle" fill="#fff" fontSize="7.5" fontWeight="800">{String(label).slice(0,5)}</text>
-              </g>
-            ))}
-          </svg>
-          <div className="mp-hero-card-legend">
-            {KG_STATES.map(s=>(
-              <span key={s.label} style={{color:s.color}}>● {s.label}</span>
-            ))}
-          </div>
-          {/* 커버리지 바 */}
-          <div className="mp-hero-coverage">
-            <div className="mp-hero-coverage-label"><span>KG 커버리지</span><span style={{color:'#4ade80',fontWeight:800}}>57%</span></div>
-            <div className="mp-hero-coverage-bar"><div style={{width:'57%'}} /></div>
+          <div className="hero-right hero-enter" style={{ "--d": "160ms" }}>
+            <div className="kg-dark-card">
+              <div className="kdc-bar">
+                <div className="kdc-dots">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+                <span>Knowledge Graph · 실시간 추적</span>
+              </div>
+              <svg width="248" height="198" viewBox="0 0 248 198">
+                <defs>
+                  <filter id="nglow">
+                    <feGaussianBlur stdDeviation="4" result="b" />
+                    <feMerge>
+                      <feMergeNode in="b" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                  <marker
+                    id="marr"
+                    markerWidth="6"
+                    markerHeight="6"
+                    refX="5"
+                    refY="3"
+                    orient="auto"
+                  >
+                    <path d="M0,0.5 L5.5,3 L0,5.5Z" fill="#4f6ef766" />
+                  </marker>
+                </defs>
+                {KG_DATA.edges.map(([x1, y1, x2, y2], i) => {
+                  const dx = x2 - x1,
+                    dy = y2 - y1,
+                    len = Math.hypot(dx, dy),
+                    r = 16,
+                    ux = dx / len,
+                    uy = dy / len;
+                  return (
+                    <line
+                      key={i}
+                      x1={x1 + ux * r}
+                      y1={y1 + uy * r}
+                      x2={x2 - ux * (r + 3)}
+                      y2={y2 - uy * (r + 3)}
+                      stroke="#4f6ef755"
+                      strokeWidth="1.5"
+                      strokeDasharray="5 3"
+                      markerEnd="url(#marr)"
+                      className="e-flow"
+                      style={{ animationDelay: `${i * 0.2}s` }}
+                    />
+                  );
+                })}
+                {KG_DATA.nodes.map(([x, y, l, c, d]) => (
+                  <g key={l} className="n-grp" style={{ "--nd": `${d}s` }}>
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={22}
+                      fill={c}
+                      opacity={0.1}
+                      className="n-pulse"
+                    />
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={15}
+                      fill={c}
+                      filter="url(#nglow)"
+                      opacity={0.88}
+                    />
+                    <text
+                      x={x}
+                      y={y + 4}
+                      textAnchor="middle"
+                      fill="#fff"
+                      fontSize="8"
+                      fontWeight="700"
+                    >
+                      {String(l).slice(0, 5)}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+              <div className="kdc-legend">
+                {[
+                  ["#4f6ef7", "이해됨"],
+                  ["#f59e0b", "부분적"],
+                  ["#475569", "미학습"],
+                  ["#ef4444", "오개념"],
+                ].map(([c, t]) => (
+                  <span key={t} style={{ color: c }}>
+                    ● {t}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ════ 문제 제기 ════ */}
-      <section className="mp-section mp-section-dark">
-        <div className="mp-pain-layout">
-          {/* 왼쪽: 큰 인트로 */}
-          <div className="mp-pain-intro">
-            <div className="mp-eyebrow mp-eyebrow-light" style={{marginBottom:20}}>지금까지의 문제</div>
-            <h2 className="mp-title" style={{textAlign:'left', marginBottom:16}}>
-              AI로 공부해도<br /><em>뭔가 부족한</em><br />이유가 있습니다
+      {/* ══ WHY ════════════════════════════════════ */}
+      <section className="why-sec">
+        <div className="why-header rv">
+          <p className="why-eyebrow">많은 학생들이 이런 말을 합니다</p>
+          <h2 className="why-title">열심히 했는데<br /><span className="why-em">왜 막히지?</span></h2>
+        </div>
+        <div className="why-cards">
+          {[
+            {
+              icon: (
+                <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="6" y="8" width="20" height="26" rx="3" stroke="#818cf8" strokeWidth="2.2" fill="#eef2ff"/>
+                  <line x1="10" y1="15" x2="22" y2="15" stroke="#818cf8" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="10" y1="20" x2="22" y2="20" stroke="#818cf8" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="10" y1="25" x2="17" y2="25" stroke="#818cf8" strokeWidth="2" strokeLinecap="round"/>
+                  <circle cx="31" cy="31" r="7" fill="#818cf8"/>
+                  <line x1="28.5" y1="31" x2="33.5" y2="31" stroke="white" strokeWidth="2.2" strokeLinecap="round"/>
+                </svg>
+              ),
+              quote: "다 읽었는데\n막상 설명하려니 말이 안 나와",
+              reason: "눈으로 훑은 지식은 내 것이 아닙니다. 입으로 설명해봐야 비로소 드러납니다.",
+              color: "#818cf8",
+              bg: "#eef2ff",
+            },
+            {
+              icon: (
+                <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="20" cy="20" r="13" stroke="#f472b6" strokeWidth="2.2" fill="#fdf2f8"/>
+                  <path d="M16 16.5c0-2.2 1.8-4 4-4s4 1.8 4 4c0 1.8-1.2 2.8-2.4 3.6C20.4 20.8 20 21.4 20 22.5" stroke="#f472b6" strokeWidth="2.2" strokeLinecap="round"/>
+                  <circle cx="20" cy="27" r="1.3" fill="#f472b6"/>
+                </svg>
+              ),
+              quote: "열심히 했는데\n내가 뭘 모르는지도 모르겠어",
+              reason: "어디서 막히는지 모르면 무엇을 더 공부해야 할지도 알 수 없습니다.",
+              color: "#f472b6",
+              bg: "#fdf2f8",
+            },
+            {
+              icon: (
+                <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 10C8 8.9 8.9 8 10 8h20c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H22l-6 5v-5h-6c-1.1 0-2-.9-2-2V10z" stroke="#34d399" strokeWidth="2.2" fill="#ecfdf5"/>
+                  <line x1="18" y1="17" x2="22" y2="21" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round"/>
+                  <line x1="22" y1="17" x2="18" y2="21" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round"/>
+                </svg>
+              ),
+              quote: "틀려도 아무도\n말 안 해주니까 그냥 넘어가",
+              reason: "잘못된 이해가 시험 직전까지 발견되지 않고 쌓입니다.",
+              color: "#34d399",
+              bg: "#ecfdf5",
+            },
+          ].map(({ icon, quote, reason, color, bg }, i) => (
+            <div
+              key={i}
+              className="why-card rv"
+              style={{ "--wc": color, "--wb": bg, transitionDelay: `${i * 110}ms` }}
+            >
+              <div className="why-icon">{icon}</div>
+              <p className="why-quote">"{quote}"</p>
+              <p className="why-reason">{reason}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ══ FEATURES ═══════════════════════════════ */}
+      <section className="feat-sec">
+        {/* Feature 1 — large hero card */}
+        <div className="feat-hero-card rv">
+          <div className="fhc-text">
+            <span className="feat-tag">핵심 차별점</span>
+            <h2 className="fhc-title">
+              AI가
+              <br />
+              진짜로 모릅니다
             </h2>
-            <p className="mp-sub" style={{textAlign:'left'}}>
-              도구가 없는 게 아닙니다.<br />진짜 이해를 <em style={{fontStyle:'normal',color:'#f87171'}}>검증</em>하는 도구가 없었던 겁니다.
+            <p className="fhc-desc">
+              모르는 척이 아닙니다.
+              <br />
+              AI는 당신의 설명 전까지 아무것도 알지 못합니다.
+              <br />
+              설명할수록 AI의 지식이 채워지고, 당신의 빈틈이 드러납니다.
             </p>
           </div>
-
-          {/* 오른쪽: 공감 카드 */}
-          <div className="mp-pain-cards">
-            {PROBLEMS.map((p,i)=>(
-              <div key={i} className="mp-pain-card">
-                <span className="mp-pain-emoji">{p.icon}</span>
-                <div>
-                  <div className="mp-pain-title">{p.title}</div>
-                  <div className="mp-pain-desc">{p.desc}</div>
+          <div className="fhc-vis">
+            <div className="chat-mock">
+              <div className="chat-mock-bar">
+                <div className="cm-dots">
+                  <i />
+                  <i />
+                  <i />
                 </div>
+                <span>AI 학생과의 대화</span>
               </div>
-            ))}
+              {CHAT_MSGS.map(({ r, t }, i) => (
+                <div
+                  key={i}
+                  className={`cm-row ${r}`}
+                  style={{ animationDelay: `${0.4 + i * 0.55}s` }}
+                >
+                  {r === "ai" && <div className="cm-av ai">🤖</div>}
+                  <div className={`cm-bubble ${r}`}>{t}</div>
+                  {r === "user" && <div className="cm-av usr">👤</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Features 2 & 3 — side by side */}
+        <div className="feat-pair">
+          <div className="feat-card rv" style={{ transitionDelay: "80ms" }}>
+            <div
+              className="fc-icon"
+              style={{ background: "#eef2ff", color: "#4f6ef7" }}
+            >
+              📊
+            </div>
+            <h3 className="fc-title">이해도가 눈에 보입니다</h3>
+            <p className="fc-desc">
+              설명할수록 지식 그래프가 채워집니다. 어떤 개념을 알고, 어디가
+              빠졌는지 시각적으로 확인하세요.
+            </p>
+            <div className="fc-bars">
+              {[
+                ["#4f6ef7", "이해됨", "72%"],
+                ["#f59e0b", "부분 이해", "45%"],
+                ["#94a3b8", "미학습", "20%"],
+              ].map(([c, l, w]) => (
+                <div key={l} className="fc-bar-row">
+                  <span className="fc-bar-lbl" style={{ color: c }}>
+                    {l}
+                  </span>
+                  <div className="fc-bar-track">
+                    <div
+                      className="fc-bar-fill"
+                      style={{ "--c": c, "--w": w }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="feat-card rv" style={{ transitionDelay: "160ms" }}>
+            <div
+              className="fc-icon"
+              style={{ background: "#faf5ff", color: "#8b5cf6" }}
+            >
+              🔄
+            </div>
+            <h3 className="fc-title">학습이 끊기지 않습니다</h3>
+            <p className="fc-desc">
+              오늘 못 다룬 개념은 다음 세션에서 이어집니다. 세션이 끝나도 학습
+              맥락이 사라지지 않습니다.
+            </p>
+            <div className="fc-sessions">
+              {[
+                ["1회차", "40%", "0ms"],
+                ["2회차", "65%", "150ms"],
+                ["3회차", "88%", "300ms"],
+              ].map(([s, w, d]) => (
+                <div key={s} className="fc-sess-row">
+                  <span className="fc-sess-lbl">{s}</span>
+                  <div className="fc-sess-track">
+                    <div
+                      className="fc-sess-fill"
+                      style={{ "--w": w, "--d": d }}
+                    />
+                  </div>
+                  <span className="fc-sess-pct">{w}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ════ 차별점 ════ */}
-      <section className="mp-section mp-section-offwhite">
-        <div className="mp-section-head">
-          <div className="mp-eyebrow">우리가 다른 이유</div>
-          <h2 className="mp-title mp-title-dark"><em>4가지</em>가 근본적으로 다릅니다</h2>
-          <p className="mp-sub mp-sub-dark">기능 하나 추가가 아니라, 학습 구조 자체를 바꿉니다.</p>
-        </div>
-        <div className="mp-vs-list">
-          {DIFFS.map((d,i)=>(
-            <div key={i} className="mp-vs-row" style={{'--accent':d.color}}>
-              <div className="mp-vs-num">0{i+1}</div>
-              <div className="mp-vs-label">{d.label}</div>
-              <div className="mp-vs-before">
-                <span className="mp-vs-tag-before">기존</span>
-                <span>{d.before.replace('기존: ','')}</span>
-              </div>
-              <div className="mp-vs-arrow">→</div>
-              <div className="mp-vs-after">
-                <span className="mp-vs-tag-after">우리</span>
-                <span>{d.after.replace('우리: ','')}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ════ 작동 방식 ════ */}
-      <section className="mp-section mp-section-dark">
-        <div className="mp-section-head">
-          <div className="mp-eyebrow mp-eyebrow-light">어떻게 작동하나요</div>
-          <h2 className="mp-title">딱 <em>3단계</em>입니다</h2>
-          <p className="mp-sub">복잡한 설정 없이, PDF 하나로 시작할 수 있습니다.</p>
-        </div>
-        <div className="mp-how">
-          {HOW.map((h,i)=>(
-            <div key={i} className="mp-how-card">
-              <div className="mp-how-step">{h.step}</div>
-              {i < HOW.length-1 && <div className="mp-how-arrow">→</div>}
-              <div className="mp-how-icon">{h.icon}</div>
-              <h3>{h.title}</h3>
-              <p>{h.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ════ KG 시각화 (차별점 심화) ════ */}
-      <section className="mp-section mp-section-light">
-        <div className="mp-section-head">
-          <div className="mp-eyebrow">핵심 기술</div>
-          <h2 className="mp-title mp-title-dark">이해도를 <em>지도로</em> 그립니다</h2>
-          <p className="mp-sub mp-sub-dark">
-            학습자료에서 추출한 기준 그래프와 사용자의 설명으로 만들어지는 동적 그래프를 비교해
-            어떤 개념을 이해했고, 어디서 막혔는지 한눈에 볼 수 있습니다.
+      {/* ══ KG MAP ═════════════════════════════════ */}
+      <section className="kg-sec rv">
+        <div className="kg-sec-header">
+          <h2 className="kg-sec-title">이해를 지도로 그립니다</h2>
+          <p className="kg-sec-sub">
+            세션이 끝나면 내가 어떤 개념을 알고, 어디가 빠졌는지<br />
+            지식 그래프로 한눈에 확인할 수 있습니다.
           </p>
         </div>
-
-        <div className="mp-kg-visual">
-          {/* Reference KG */}
-          <div className="mp-kg-vis-card mp-kg-vis-ref">
-            <div className="mp-kg-vis-label">
-              <span className="mp-kg-badge mp-kg-ref">Reference KG</span>
-              <span>학습자료 기반 정답 기준</span>
-            </div>
-            <svg width="100%" viewBox="0 0 260 160" style={{maxHeight:160}}>
-              {[[130,20,65,70],[130,20,195,70],[65,70,35,130],[65,70,130,130],[195,70,130,130],[195,70,225,130]].map(([x1,y1,x2,y2],i)=>(
-                <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#cbd5e1" strokeWidth="1.5"/>
+        <div className="kg-compare">
+          <div className="kg-cmp-card">
+            <div className="kg-cmp-label before">세션 시작 전</div>
+            <svg width="240" height="190" viewBox="0 0 240 190">
+              {[[120,24,60,90],[120,24,180,90],[60,90,60,156],[180,90,180,156]].map(([x1,y1,x2,y2],i)=>(
+                <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#e2e8f0" strokeWidth="1.5" strokeDasharray="5 3"/>
               ))}
-              {[[130,20,'TCP/IP'],[65,70,'흐름제어'],[195,70,'3-way'],[35,130,'슬라이딩'],[130,130,'혼잡제어'],[225,130,'포트번호']].map(([x,y,l])=>(
-                <g key={String(l)}>
-                  <circle cx={x} cy={y} r={18} fill="#475569" opacity={0.6}/>
-                  <text x={x} y={Number(y)+4} textAnchor="middle" fill="#fff" fontSize="7" fontWeight="700">{String(l).slice(0,5)}</text>
+              {[[120,24,"TCP"],[60,90,"흐름제어"],[180,90,"혼잡제어"],[60,156,"슬라이딩"],[180,156,"ACK"]].map(([x,y,l])=>(
+                <g key={l}>
+                  <circle cx={x} cy={y} r={15} fill="#94a3b8" opacity={0.25}/>
+                  <circle cx={x} cy={y} r={15} fill="none" stroke="#cbd5e1" strokeWidth="1.5"/>
+                  <text x={x} y={y+4} textAnchor="middle" fill="#94a3b8" fontSize="7.5" fontWeight="700">{l}</text>
                 </g>
               ))}
             </svg>
-            <div className="mp-kg-vis-sub">모든 노드가 Missing 상태 (세션 시작 전)</div>
+            <p className="kg-cmp-desc">모든 노드가 미학습 상태</p>
           </div>
-
-          <div className="mp-kg-vis-vs">
-            <div className="mp-kg-vis-vs-line" />
-            <div className="mp-kg-vis-vs-label">세션 후</div>
-            <div className="mp-kg-vis-vs-line" />
+          <div className="kg-arrow-col">
+            <div className="kg-arrow-line"/>
+            <span className="kg-arrow-txt">세션 후</span>
           </div>
-
-          {/* User KG */}
-          <div className="mp-kg-vis-card mp-kg-vis-user">
-            <div className="mp-kg-vis-label">
-              <span className="mp-kg-badge mp-kg-user">User KG</span>
-              <span>사용자 설명으로 채워진 이해도</span>
-            </div>
-            <svg width="100%" viewBox="0 0 260 160" style={{maxHeight:160}}>
-              <defs><filter id="glow-kg"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-              {[[130,20,65,70],[130,20,195,70],[65,70,35,130],[65,70,130,130],[195,70,130,130],[195,70,225,130]].map(([x1,y1,x2,y2],i)=>(
-                <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#cbd5e1" strokeWidth="1.5"/>
+          <div className="kg-cmp-card">
+            <div className="kg-cmp-label after">세션 완료 후</div>
+            <svg width="240" height="190" viewBox="0 0 240 190">
+              <defs>
+                <filter id="kglow2">
+                  <feGaussianBlur stdDeviation="3" result="b"/>
+                  <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+              </defs>
+              {[[120,24,60,90],[120,24,180,90],[60,90,60,156],[180,90,180,156]].map(([x1,y1,x2,y2],i)=>(
+                <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#c7d2fe" strokeWidth="1.5" strokeDasharray="5 3"/>
               ))}
               {[
-                [130,20,'TCP/IP','#22d3ee'],
-                [65,70,'흐름제어','#4ade80'],
-                [195,70,'3-way','#4ade80'],
-                [35,130,'슬라이딩','#fbbf24'],
-                [130,130,'혼잡제어','#475569'],
-                [225,130,'포트번호','#475569'],
+                [120,24,"TCP","#10b981"],
+                [60,90,"흐름제어","#10b981"],
+                [180,90,"혼잡제어","#f59e0b"],
+                [60,156,"슬라이딩","#94a3b8"],
+                [180,156,"ACK","#ef4444"],
               ].map(([x,y,l,c])=>(
-                <g key={String(l)}>
-                  <circle cx={x} cy={y} r={20} fill={c} opacity={0.15}/>
-                  <circle cx={x} cy={y} r={14} fill={c} filter="url(#glow-kg)"/>
-                  <text x={x} y={Number(y)+4} textAnchor="middle" fill="#fff" fontSize="7" fontWeight="700">{String(l).slice(0,5)}</text>
+                <g key={l}>
+                  <circle cx={x} cy={y} r={20} fill={c} opacity={0.12}/>
+                  <circle cx={x} cy={y} r={15} fill={c} filter="url(#kglow2)" opacity={0.9}/>
+                  <text x={x} y={y+4} textAnchor="middle" fill="#fff" fontSize="7.5" fontWeight="700">{l}</text>
                 </g>
               ))}
             </svg>
-            <div className="mp-kg-vis-sub">4개 노드 확인, 2개 Missing → 다음 세션 목표</div>
+            <p className="kg-cmp-desc">이해 상태가 색으로 표시됨</p>
           </div>
         </div>
+        <div className="kg-states">
+          {[
+            ["#10b981","Confirmed","완전히 설명한 개념"],
+            ["#f59e0b","Partial","일부만 설명한 개념"],
+            ["#94a3b8","Missing","언급하지 못한 개념"],
+            ["#ef4444","Misconception","잘못 설명한 개념"],
+          ].map(([c,s,d])=>(
+            <div key={s} className="kg-state-item">
+              <span className="kg-state-dot" style={{background:c}}/>
+              <div>
+                <span className="kg-state-name">{s}</span>
+                <span className="kg-state-desc">{d}</span>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        {/* 노드 상태 설명 */}
-        <div className="mp-kg-states">
-          {KG_STATES.map(s=>(
-            <div key={s.label} className="mp-kg-state" style={{'--c':s.color,'--n':s.neon}}>
-              <div className="mp-kg-dot" />
-              <div className="mp-kg-state-label">{s.label}</div>
-              <div className="mp-kg-state-desc">{s.desc}</div>
+        {/* 체크리스트 기능 강조 */}
+        <div className="kg-checklist-block rv">
+          <div className="kcb-left">
+            <span className="kcb-tag">✅ 체크리스트</span>
+            <h3 className="kcb-title">
+              노드를 클릭하면<br />
+              세부 항목까지 확인됩니다
+            </h3>
+            <p className="kcb-desc">
+              각 개념마다 AI가 생성한 세부 체크리스트가 있습니다.<br />
+              어떤 항목을 설명했고, 무엇이 빠졌는지 항목 단위로 추적됩니다.
+            </p>
+            <div className="kcb-pills">
+              <span className="kcb-pill green">✓ 설명한 항목</span>
+              <span className="kcb-pill red">✗ 빠진 항목</span>
+              <span className="kcb-pill orange">⚠ 오개념 항목</span>
+            </div>
+          </div>
+          <div className="kcb-right">
+            <div className="checklist-mock">
+              <div className="clm-header">
+                <span className="clm-status-dot" style={{background:"#10b981"}}/>
+                <span className="clm-node-name">TCP</span>
+                <span className="clm-badge">Confirmed</span>
+              </div>
+              <div className="clm-items">
+                {[
+                  [true,  false, "3-way handshake 과정 설명됨"],
+                  [true,  false, "연결 지향 프로토콜 개념"],
+                  [false, false, "혼잡 제어 메커니즘 (누락)"],
+                  [false, true,  "슬라이딩 윈도우 (오개념 감지)"],
+                ].map(([met, mis], i) => (
+                  <div key={i} className={`clm-item ${mis ? "contradict" : met ? "met" : "unmet"}`}>
+                    <span className="clm-icon">{mis ? "⚠" : met ? "✓" : "✗"}</span>
+                    <span className="clm-text">{[
+                      "3-way handshake 과정 설명됨",
+                      "연결 지향 프로토콜 개념",
+                      "혼잡 제어 메커니즘 (누락)",
+                      "슬라이딩 윈도우 (오개념 감지)",
+                    ][i]}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="clm-hint">💡 리포트에서 모든 노드의 체크리스트를 확인하세요</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ══ HOW IT WORKS ═══════════════════════════ */}
+      <section className="how-sec">
+        <div className="how-header rv">
+          <h2 className="how-title">딱 세단계입니다</h2>
+          <p className="how-sub">복잡한 설정 없이 PDF 한 장으로 시작하세요</p>
+        </div>
+        <div className="steps">
+          {[
+            {
+              n: "01",
+              icon: "📄",
+              title: "PDF 업로드",
+              desc: "강의 자료를 올리면 AI가 핵심 개념을 자동으로 파악합니다.",
+            },
+            {
+              n: "02",
+              icon: "🗣️",
+              title: "설명하기",
+              desc: "AI 학생에게 알고 있는 것을 자유롭게 말해보세요.",
+            },
+            {
+              n: "03",
+              icon: "📊",
+              title: "리포트 확인",
+              desc: "어디가 부족한지 한눈에 파악하고 다음 학습을 계획하세요.",
+            },
+          ].map(({ n, icon, title, desc }, i) => (
+            <div
+              key={n}
+              className="step-wrap rv"
+              style={{ transitionDelay: `${i * 100}ms` }}
+            >
+              {i > 0 && (
+                <div className="step-conn">
+                  <div className="conn-dot d1" />
+                  <div className="conn-dot d2" />
+                  <div className="conn-dot d3" />
+                </div>
+              )}
+              <div className="step-card">
+                <div className="step-num">{n}</div>
+                <div className="step-icon">{icon}</div>
+                <h3 className="step-title">{title}</h3>
+                <p className="step-desc">{desc}</p>
+              </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ════ CTA ════ */}
-      <section className="mp-cta-section">
-        <div className="mp-cta-border">
-          <div className="mp-cta-inner">
-            <div className="mp-cta-glow" />
-            <div className="mp-eyebrow mp-eyebrow-light" style={{marginBottom:16}}>지금 바로 시작하세요</div>
-            <h2 className="mp-cta-title">
-              아는 것과 설명할 수 있는 것,<br />
-              <span className="mp-hero-shimmer">차이를 확인해보세요</span>
-            </h2>
-            <p className="mp-cta-sub">
-              PDF 하나만 있으면 됩니다.<br />학습자료 업로드 후 바로 시작할 수 있습니다.
-            </p>
-            <div className="mp-cta-actions">
-              <button className="mp-btn-primary mp-btn-xl" onClick={() => navigate('/upload')}>
-                📄 PDF 업로드로 시작하기
-              </button>
-              <button className="mp-btn-ghost mp-btn-xl" onClick={() => navigate('/report')}>
-                리포트 예시 먼저 보기
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ══ CTA (dark) ═════════════════════════════ */}
+      <section className="cta rv">
+        <div className="cta-orb ca" />
+        <div className="cta-orb cb" />
+        <p className="cta-eye">지금 바로 시작하세요</p>
+        <h2 className="cta-h2">
+          설명하면서
+          <br />
+          진짜 실력을 확인하세요
+        </h2>
+        <p className="cta-sub">PDF 한 장으로 충분합니다</p>
+        <button className="cta-btn" onClick={() => navigate("/upload")}>
+          📄 PDF 업로드하기
+        </button>
       </section>
-
     </div>
   );
 }
