@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str
+    stt_model: str = "gpt-4o-mini-transcribe"
 
     # 파일 업로드
     upload_dir: str = "uploads"

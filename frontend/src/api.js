@@ -50,7 +50,31 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  // 음성 인식
+  transcribeAudio: (audioBlob, topic) => {
+    const form = new FormData();
+    const ext = getAudioExtension(audioBlob.type);
+    form.append('file', audioBlob, `teacher-mode.${ext}`);
+    form.append('topic', topic || '');
+
+    return fetch(`${BASE}/speech/transcribe`, { method: 'POST', body: form })
+      .then(async res => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+        return res.json();
+      });
+  },
 };
+
+function getAudioExtension(mimeType = '') {
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
+  if (mimeType.includes('mp4')) return 'm4a';
+  return 'webm';
+}
 
 // API KG 노드/엣지 → KnowledgeGraph 컴포넌트 형식 변환 (centered subtree 트리 레이아웃)
 export function layoutKGNodes(nodes, edges, width, height) {
