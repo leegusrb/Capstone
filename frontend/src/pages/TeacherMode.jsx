@@ -27,8 +27,12 @@ export default function TeacherMode() {
   const sessionHistory = useRef([]);
   const chatRef = useRef();
   const initialized = useRef(false);
-  const recognitionRef = useRef(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const [voiceStatus, setVoiceStatus] = useState('idle');
+  const isRecording = voiceStatus === 'recording';
+  const isTranscribing = voiceStatus === 'transcribing';
 
   useEffect(() => {
     if (initialized.current) return;
@@ -45,6 +49,16 @@ export default function TeacherMode() {
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages, typing]);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.onstop = null;
+        mediaRecorderRef.current.stop();
+      }
+      stopVoiceStream();
+    };
+  }, []);
 
   async function initSession() {
     try {
@@ -149,30 +163,84 @@ export default function TeacherMode() {
     return new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function toggleVoice() {
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
+  async function toggleVoice() {
+    if (voiceStatus === 'recording') {
+      mediaRecorderRef.current?.stop();
       return;
     }
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      alert('이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.');
+
+    if (voiceStatus === 'transcribing') return;
+
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      alert('이 브라우저는 음성 녹음을 지원하지 않습니다. 최신 Chrome 또는 Safari를 사용해주세요.');
       return;
     }
-    const recognition = new SR();
-    recognition.lang = 'ko-KR';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.onstart = () => setIsRecording(true);
-    recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setInput(prev => prev ? prev + ' ' + transcript : transcript);
-    };
-    recognition.onend = () => setIsRecording(false);
-    recognition.onerror = () => setIsRecording(false);
-    recognitionRef.current = recognition;
-    recognition.start();
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = getSupportedAudioMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        setVoiceStatus('transcribing');
+        stopVoiceStream();
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mimeType || 'audio/webm',
+        });
+        audioChunksRef.current = [];
+
+        if (!audioBlob.size) {
+          alert('녹음된 오디오가 없습니다. 다시 시도해주세요.');
+          setVoiceStatus('idle');
+          return;
+        }
+
+        try {
+          const res = await api.transcribeAudio(audioBlob, topic);
+          const transcript = res.text?.trim();
+          if (transcript) {
+            setInput(prev => prev ? `${prev} ${transcript}` : transcript);
+          }
+        } catch (e) {
+          alert(e.message || '음성 인식에 실패했습니다.');
+        } finally {
+          mediaRecorderRef.current = null;
+          setVoiceStatus('idle');
+        }
+      };
+
+      recorder.onerror = () => {
+        stopVoiceStream();
+        setVoiceStatus('idle');
+        alert('녹음 중 오류가 발생했습니다.');
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setVoiceStatus('recording');
+    } catch (e) {
+      stopVoiceStream();
+      setVoiceStatus('idle');
+      alert(e.message || '마이크 권한을 확인해주세요.');
+    }
+  }
+
+  function stopVoiceStream() {
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+  }
+
+  function getSupportedAudioMimeType() {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
   }
 
   if (error) {
@@ -267,12 +335,12 @@ export default function TeacherMode() {
               disabled={loading || sessionDone}
             />
             <button
-              className={`mic-btn${isRecording ? ' recording' : ''}`}
+              className={`mic-btn${isRecording ? ' recording' : ''}${isTranscribing ? ' transcribing' : ''}`}
               onClick={toggleVoice}
-              disabled={loading || sessionDone}
-              title={isRecording ? '음성 입력 중단' : '음성으로 입력'}
+              disabled={loading || sessionDone || isTranscribing}
+              title={isTranscribing ? '음성 변환 중' : isRecording ? '음성 입력 중단' : '음성으로 입력'}
             >
-              {isRecording ? '⏹' : '🎙️'}
+              {isTranscribing ? '…' : isRecording ? '⏹' : '🎙️'}
             </button>
             <button className="btn btn-primary send-btn" onClick={send}
               disabled={!input.trim() || loading || sessionDone}>
