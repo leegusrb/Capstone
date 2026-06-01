@@ -21,12 +21,14 @@ export default function TeacherMode() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sessionDone, setSessionDone] = useState(false);
+  const [coverage, setCoverage] = useState(null);
 
-  // 누적 상태 (매 턴 백엔드로 전달)
   const conversationHistory = useRef([]);
   const sessionHistory = useRef([]);
   const chatRef = useRef();
-  const initialized = useRef(false); // 이중 호출 방지
+  const initialized = useRef(false);
+  const recognitionRef = useRef(null);
+  const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -85,11 +87,11 @@ export default function TeacherMode() {
 
       sessionHistory.current = [...sessionHistory.current, res.scores];
 
-      // 오개념 누적
       if (res.misconceptions?.length) {
         const newMc = res.misconceptions.map(m => ({ text: getMisconceptionText(m), time: t }));
         setMisconceptions(prev => [...prev, ...newMc]);
       }
+      if (res.coverage) setCoverage(res.coverage);
 
       setTyping(false);
 
@@ -147,6 +149,32 @@ export default function TeacherMode() {
     return new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   }
 
+  function toggleVoice() {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      alert('이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.');
+      return;
+    }
+    const recognition = new SR();
+    recognition.lang = 'ko-KR';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onstart = () => setIsRecording(true);
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      setInput(prev => prev ? prev + ' ' + transcript : transcript);
+    };
+    recognition.onend = () => setIsRecording(false);
+    recognition.onerror = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+  }
+
   if (error) {
     return (
       <div className="chat-page fade-in" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -166,7 +194,9 @@ export default function TeacherMode() {
             <div className="alert-icon">📊</div>
             <div>
               <div className="alert-title">세션 완료!</div>
-              <div className="alert-desc">10턴이 완료되었습니다. 리포트를 확인해보세요.</div>
+              <div className="alert-desc">
+                {sessionDone ? '평가가 완료되었습니다.' : '10턴이 완료되었습니다.'} 리포트를 확인해보세요.
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowAlert(false)}>계속하기</button>
@@ -236,6 +266,14 @@ export default function TeacherMode() {
               rows={2}
               disabled={loading || sessionDone}
             />
+            <button
+              className={`mic-btn${isRecording ? ' recording' : ''}`}
+              onClick={toggleVoice}
+              disabled={loading || sessionDone}
+              title={isRecording ? '음성 입력 중단' : '음성으로 입력'}
+            >
+              {isRecording ? '⏹' : '🎙️'}
+            </button>
             <button className="btn btn-primary send-btn" onClick={send}
               disabled={!input.trim() || loading || sessionDone}>
               전송
@@ -254,6 +292,22 @@ export default function TeacherMode() {
                 </div>
               </div>
             </div>
+            {coverage && (
+              <div style={{ marginTop: 12, padding: '8px 0', borderTop: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>KG 커버리지</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, background: '#e2e8f0', borderRadius: 4, height: 6 }}>
+                    <div style={{ width: `${coverage.coverage_percent || 0}%`, background: '#10b981', borderRadius: 4, height: '100%', transition: 'width 0.5s' }} />
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#10b981' }}>
+                    {Math.round(coverage.coverage_percent || 0)}%
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                  {coverage.confirmed_count || 0} / {coverage.total_count || 0} 개념 확인됨
+                </div>
+              </div>
+            )}
           </div>
 
           {misconceptions.length > 0 && (
@@ -263,8 +317,12 @@ export default function TeacherMode() {
                 <div key={i} className="mc-item">
                   <div className="mc-dot" />
                   <div>
-                    <p className="mc-text">{m.text}</p>
-                    <span className="mc-time">{m.time}</span>
+                    <p className="mc-text">{m.content || m.text || String(m)}</p>
+                    {m.correction && (
+                      <p style={{ fontSize: 11, color: '#10b981', marginTop: 2 }}>
+                        ✓ {m.correction}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
