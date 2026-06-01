@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -26,11 +27,22 @@ from app.services.reference_kg_generator import generate_reference_kg
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20MB
+PAGE_MARKER_RE = re.compile(r"^\[page_number=\d+\]$")
+
+
+def _has_page_marker_node(kg_data: dict | None) -> bool:
+    if not kg_data:
+        return False
+    return any(
+        PAGE_MARKER_RE.fullmatch(str(node.get("id", "")).strip())
+        for node in kg_data.get("nodes", [])
+        if isinstance(node, dict)
+    )
 
 
 def _find_cached_document(db: Session, file_hash: str) -> Document | None:
     """같은 PDF 해시로 이미 완료된 문서를 찾는다."""
-    return (
+    cached_documents = (
         db.query(Document)
         .join(KnowledgeGraph, KnowledgeGraph.document_id == Document.id)
         .filter(
@@ -39,8 +51,13 @@ def _find_cached_document(db: Session, file_hash: str) -> Document | None:
             KnowledgeGraph.reference_kg.isnot(None),
         )
         .order_by(Document.created_at.desc())
-        .first()
+        .all()
     )
+    for document in cached_documents:
+        if _has_page_marker_node(document.knowledge_graph.reference_kg):
+            continue
+        return document
+    return None
 
 
 def _copy_chunks(db: Session, source: Document, target: Document) -> int:
@@ -139,10 +156,9 @@ async def upload_document(
             # 5. 임베딩 생성 + DB 저장
             chunk_count = embed_and_save_chunks(db, document, chunk_data_list)
 
-            # 6. Reference KG 생성 — 청크 텍스트만 추출해서 LLM에 전달
+            # 6. Reference KG 생성 — 청크 페이지 정보를 함께 전달
             #    노드별 체크리스트 + Self-Consistency 적용된 v3.2 generator 사용
-            text_chunks = [c["content"] for c in chunk_data_list]
-            reference_kg = generate_reference_kg(text_chunks)
+            reference_kg = generate_reference_kg(chunk_data_list)
 
             # 7. User KG 초기화 — Reference KG의 모든 노드/엣지를 missing 상태로 복사
             user_kg = init_user_kg(reference_kg)

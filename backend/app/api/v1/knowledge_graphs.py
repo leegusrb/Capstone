@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.models.chunk import Chunk
 from app.models.knowledge_graph import KnowledgeGraph
 from app.models.document import Document
 from app.core.exceptions import DocumentNotFoundError
@@ -106,18 +107,27 @@ def get_user_kg(
     User KG와 학습 진행 현황을 반환한다.
     세션 종료 후 사용자에게 학습 결과를 보여줄 때 사용한다.
 
-    각 노드는 항목별 met/unmet 결과(checklist_result)를 포함하므로,
-    사용자가 자신이 빠뜨린 부분을 직접 확인할 수 있다.
-    source_quote(학습자료 원문 인용)는 제외된다.
+    각 노드는 항목별 met/unmet 결과와 PDF 근거(source_quote, page_number)를
+    포함하므로, 사용자가 자신이 빠뜨린 부분과 자료 근거를 직접 확인할 수 있다.
     """
     kg_record = _get_kg_or_404(db, document_id)
 
     reference_kg = deserialize_kg(kg_record.reference_kg or {"nodes": [], "edges": []})
     user_kg      = deserialize_kg(kg_record.user_kg      or {"nodes": [], "edges": []})
+    chunks = (
+        db.query(Chunk)
+        .filter(Chunk.document_id == document_id)
+        .order_by(Chunk.chunk_index)
+        .all()
+    )
 
     return {
         "document_id":  document_id,
-        "user_kg":      strip_checklist_for_user_view(kg_record.user_kg or {"nodes": [], "edges": []}),
+        "user_kg":      strip_checklist_for_user_view(
+            kg_record.user_kg or {"nodes": [], "edges": []},
+            chunks=chunks,
+            include_sources=True,
+        ),
         "coverage":     get_kg_coverage(user_kg, reference_kg),
         "missing_nodes": get_missing_nodes(user_kg),
     }

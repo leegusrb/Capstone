@@ -3,5 +3,8 @@
 //children은 props로 html이나 copmonent를 받을 때
 //onClick={()=> 이벤트 처리 
 
+function Button({ children, ...props }) {
+  return <button {...props}>{children}</button>;
+}
 
 export default Button;

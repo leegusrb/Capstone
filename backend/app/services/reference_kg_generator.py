@@ -44,6 +44,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
 
 import networkx as nx
 from openai import OpenAI
@@ -58,6 +59,7 @@ _openai_client = OpenAI(api_key=settings.openai_api_key)
 _ALLOWED_RELATIONS = {r.value for r in RelationType}
 KG_DEFAULT_MODEL = "gpt-5.4-mini-2026-03-17"
 KG_HIGH_QUALITY_MODEL = "gpt-5.4-2026-03-05"
+_PAGE_MARKER_RE = re.compile(r"^\[page_number=\d+\]$")
 
 
 # ──────────────────────────────────────────────
@@ -209,10 +211,12 @@ _REFERENCE_KG_EXTRACTION_PROMPT = """\
 각 노드는 사용자가 해당 개념을 "정확하게 설명했다"고 판정하기 위한
 체크리스트를 가져야 합니다.
 
-(2-1) 출처 강제 — 각 체크리스트 항목마다 source_quote 필수
+(2-1) 출처 강제 — 각 체크리스트 항목마다 source_quote와 page_number 필수
   - 각 항목 옆에 그 항목의 근거가 된 학습 자료의 원문 인용을 함께 출력합니다.
   - source_quote는 학습 자료 본문에 등장한 설명 문장이어야 합니다.
+  - page_number는 source_quote가 등장한 학습 자료 청크 앞의 [page_number=N] 값을 사용합니다.
   - 자료의 목차·섹션 제목은 인용으로 사용하지 마세요. 실제 설명 문장을 인용하세요.
+  - [page_number=N] 표시는 페이지 메타데이터이며 source_quote에 포함하지 마세요.
   - source_quote가 빈 문자열이거나 누락된 항목은 평가 시스템에서 reject됩니다.
 
 (2-2) 항목 수 제한
@@ -298,11 +302,13 @@ _REFERENCE_KG_EXTRACTION_PROMPT = """\
       "checklist": [
         {
           "item": "연결 지향 방식임을 명시",
-          "source_quote": "TCP는 연결 지향 프로토콜이다."
+          "source_quote": "TCP는 연결 지향 프로토콜이다.",
+          "page_number": 3
         },
         {
           "item": "3-way handshake로 연결을 수립함을 명시",
-          "source_quote": "TCP는 SYN, SYN-ACK, ACK의 3단계 과정을 통해 연결을 수립한다."
+          "source_quote": "TCP는 SYN, SYN-ACK, ACK의 3단계 과정을 통해 연결을 수립한다.",
+          "page_number": 4
         }
       ]
     }
@@ -329,6 +335,7 @@ _NODE_CANDIDATE_EXTRACTION_PROMPT = """\
 5. 일반적인 학습 자료는 15~25개를 목표로 하며, 30개를 초과하지 않습니다.
 6. 각 노드는 근거가 된 학습 자료 원문 인용(source_quote)을 반드시 포함합니다.
 7. source_quote는 빈 문자열이면 안 되며, 자료 본문의 실제 설명 문장이어야 합니다.
+8. [page_number=N] 표시는 페이지 메타데이터입니다. 노드나 source_quote로 사용하지 마세요.
 
 반드시 아래 JSON 형식만 반환하세요. 설명, 마크다운 펜스, 주석 없이 순수 JSON만.
 
@@ -374,6 +381,7 @@ class ChecklistItem:
     """노드의 체크리스트 항목 1개. source_quote는 자료에서 그대로 인용된 문장."""
     item: str
     source_quote: str
+    page_number: int | None = None
 
 
 @dataclass
@@ -420,6 +428,10 @@ def _normalize_node_id(node_id: str) -> str:
     return text
 
 
+def _is_page_marker(text: str) -> bool:
+    return bool(_PAGE_MARKER_RE.fullmatch(str(text or "").strip()))
+
+
 # ──────────────────────────────────────────────
 # 5. 파싱 헬퍼
 # ──────────────────────────────────────────────
@@ -446,6 +458,48 @@ def _allowed_node_map(allowed_node_ids: set[str] | None) -> dict[str, str] | Non
     }
 
 
+def _parse_page_number(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        page_number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return page_number if page_number > 0 else None
+
+
+def _normalize_source_chunks(text_chunks: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for chunk in text_chunks:
+        if isinstance(chunk, dict):
+            content = str(chunk.get("content", "")).strip()
+            page_number = _parse_page_number(chunk.get("page_number"))
+        else:
+            content = str(chunk).strip()
+            page_number = None
+        if content:
+            normalized.append({
+                "content": content,
+                "page_number": page_number,
+            })
+    return normalized
+
+
+def _format_chunks_for_prompt(source_chunks: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for chunk in source_chunks:
+        page_number = chunk.get("page_number")
+        if page_number is not None:
+            parts.append(f"[page_number={page_number}]\n{chunk['content']}")
+        else:
+            parts.append(str(chunk["content"]))
+    return "\n\n".join(parts)
+
+
+def _plain_text_from_chunks(source_chunks: list[dict[str, Any]]) -> str:
+    return "\n\n".join(str(chunk["content"]) for chunk in source_chunks)
+
+
 def _parse_node_candidates(data: dict) -> list[NodeCandidate]:
     """LLM 응답 dict에서 노드 후보만 추출한다."""
     candidates: list[NodeCandidate] = []
@@ -456,6 +510,9 @@ def _parse_node_candidates(data: dict) -> list[NodeCandidate]:
 
         node_id = str(node["id"]).strip()
         source_quote = str(node.get("source_quote", "")).strip()
+        if _is_page_marker(node_id) or _is_page_marker(source_quote):
+            logger.warning("페이지 메타데이터 노드 후보 폐기: %s", node)
+            continue
         if not node_id or not source_quote:
             logger.warning("필드 누락 노드 후보 폐기: %s", node)
             continue
@@ -490,6 +547,9 @@ def _parse_to_dataclass(
         raw_node_id = str(node["id"]).strip()
         if not raw_node_id:
             continue
+        if _is_page_marker(raw_node_id):
+            logger.warning("페이지 메타데이터 노드 폐기: %s", raw_node_id)
+            continue
         if allowed_map is not None:
             normalized_id = _normalize_node_id(raw_node_id)
             if normalized_id not in allowed_map:
@@ -511,9 +571,13 @@ def _parse_to_dataclass(
                     "빈 source_quote — 인용 강제 위반으로 항목 폐기: %s", item
                 )
                 continue
+            if _is_page_marker(item["source_quote"]):
+                logger.warning("페이지 메타데이터 체크리스트 항목 폐기: %s", item)
+                continue
             checklist.append(ChecklistItem(
                 item=str(item["item"]).strip(),
                 source_quote=str(item["source_quote"]).strip(),
+                page_number=_parse_page_number(item.get("page_number")),
             ))
 
         parsed_node = NodeWithChecklist(id=node_id, checklist=checklist)
@@ -1547,27 +1611,40 @@ def _extract_root_concept(text: str) -> str:
     """텍스트 첫 부분에서 문서 제목/주제를 추출한다."""
     for line in text[:600].split('\n'):
         line = line.strip()
+        if _is_page_marker(line):
+            continue
         if 5 <= len(line) <= 60 and not line.startswith('http'):
             return line
     return "학습 자료"
 
 
 def _attach_root_node(graph: nx.DiGraph, root_concept: str) -> nx.DiGraph:
-    """in-degree=0인 최상위 노드들을 루트 노드에 연결한다."""
-    if root_concept in graph:
-        return graph
+    """모든 노드가 루트에서 도달 가능하도록 루트 노드를 연결한다."""
+    if root_concept not in graph:
+        graph.add_node(root_concept, status="reference", checklist=[])
+    else:
+        graph.nodes[root_concept].setdefault("status", "reference")
+        graph.nodes[root_concept].setdefault("checklist", [])
 
-    top_level = [n for n in graph.nodes() if graph.in_degree(n) == 0]
-    if not top_level:
-        return graph
-
-    graph.add_node(root_concept, status="reference", checklist=[])
+    top_level = [
+        n for n in graph.nodes()
+        if n != root_concept and graph.in_degree(n) == 0
+    ]
     for node in top_level:
-        graph.add_edge(root_concept, node, relation="포함한다", status="reference")
+        if not graph.has_edge(root_concept, node):
+            graph.add_edge(root_concept, node, relation="포함한다", status="reference")
+
+    connected = 0
+    for node in list(graph.nodes()):
+        if node == root_concept:
+            continue
+        if not nx.has_path(graph, root_concept, node):
+            graph.add_edge(root_concept, node, relation="포함한다", status="reference")
+            connected += 1
 
     logger.info(
-        "루트 노드 '%s' 추가 — 최상위 노드 %d개 연결",
-        root_concept, len(top_level),
+        "루트 노드 '%s' 연결 — 최상위 노드 %d개, 미도달 노드 %d개 보정",
+        root_concept, len(top_level), connected,
     )
     return graph
 
@@ -1606,7 +1683,7 @@ def _canonicalize_graph_order(graph: nx.DiGraph) -> nx.DiGraph:
 
 
 def generate_reference_kg(
-    text_chunks: list[str],
+    text_chunks: list[Any],
     model: str = KG_DEFAULT_MODEL,
     n_runs: int = 3,
     min_appearances: int | None = None,
@@ -1634,7 +1711,8 @@ def generate_reference_kg(
     N회 호출에 따른 비용 증가가 사용자 사용 시점 비용에는 영향이 없다.
 
     Args:
-        text_chunks      : extract_and_chunk_pdf()에서 추출된 청크 텍스트 목록
+        text_chunks      : extract_and_chunk_pdf()에서 추출된 청크 목록
+                           또는 기존 호환용 문자열 목록
         model            : OpenAI 모델 (기본 KG_DEFAULT_MODEL)
         n_runs           : 노드 후보 LLM 호출 횟수 (기본 3, 최소 1)
         min_appearances  : 노드 후보 채택 최소 등장 횟수
@@ -1648,7 +1726,7 @@ def generate_reference_kg(
             graph.nodes["TCP"] == {
                 "status": "reference",
                 "checklist": [
-                    {"item": "...", "source_quote": "..."},
+                    {"item": "...", "source_quote": "...", "page_number": 3},
                     ...
                 ],
             }
@@ -1662,7 +1740,9 @@ def generate_reference_kg(
     if detail_runs < 1:
         raise ValueError("detail_runs는 1 이상이어야 합니다.")
 
-    combined = "\n\n".join(text_chunks)
+    source_chunks = _normalize_source_chunks(text_chunks)
+    combined = _format_chunks_for_prompt(source_chunks)
+    plain_text = _plain_text_from_chunks(source_chunks)
     if len(combined) > max_text_chars:
         combined = combined[:max_text_chars] + "\n...(이하 생략)"
 
@@ -1755,7 +1835,11 @@ def generate_reference_kg(
             node.id,
             status="reference",
             checklist=[
-                {"item": ck.item, "source_quote": ck.source_quote}
+                {
+                    "item": ck.item,
+                    "source_quote": ck.source_quote,
+                    "page_number": ck.page_number,
+                }
                 for ck in node.checklist
             ],
         )
@@ -1781,7 +1865,7 @@ def generate_reference_kg(
     graph = _enforce_single_parent(graph)
 
     # ── 7. 최상위 노드 클러스터링 [PATCH v4-5] ──────────────
-    root = root_concept or _extract_root_concept(combined)
+    root = root_concept or _extract_root_concept(plain_text)
     graph = _cluster_top_nodes(graph, root, model=model)
 
     # ── 8. 루트 노드 연결 (부모 없는 노드를 루트에 연결) ──────

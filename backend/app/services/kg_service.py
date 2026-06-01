@@ -24,6 +24,7 @@ Reference KG 생성은 services/reference_kg_generator.py 가 담당한다.
 
 import logging
 from enum import Enum
+from typing import Any
 
 import networkx as nx
 from sqlalchemy.orm import Session
@@ -420,8 +421,27 @@ def get_kg_coverage(user_kg: nx.DiGraph, reference_kg: nx.DiGraph) -> dict:
 # 노출 정책 (세션 진행 중에는 KG 자체를 사용자에게 보여주지 않음):
 #   - Reference KG 응답: 체크리스트 정보 전체 제거 (정답 기준 노출 방지)
 #   - User KG 응답    : checklist_result(항목 텍스트 + met/unmet) 노출,
-#                       Reference에서 복사된 원본 checklist와 source_quote는 제거.
+#                       리포트에서 PDF 근거를 확인할 수 있도록 source_quote는 선택 노출.
 #                       세션 종료 후 사용자가 어느 항목을 빠뜨렸는지 직접 확인 가능.
+
+def _chunk_value(chunk: Any, key: str) -> Any:
+    if isinstance(chunk, dict):
+        return chunk.get(key)
+    return getattr(chunk, key, None)
+
+
+def _find_source_page_number(source_quote: str, chunks: list[Any] | None) -> int | None:
+    """source_quote가 포함된 첫 청크의 페이지 번호를 반환한다."""
+    quote = str(source_quote or "").strip()
+    if not quote or not chunks:
+        return None
+
+    for chunk in chunks:
+        content = str(_chunk_value(chunk, "content") or "")
+        if quote in content:
+            return _chunk_value(chunk, "page_number")
+
+    return None
 
 def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
     """
@@ -475,7 +495,11 @@ def strip_checklist_for_reference_view(kg_dict: dict) -> dict:
     return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
 
 
-def strip_checklist_for_user_view(kg_dict: dict) -> dict:
+def strip_checklist_for_user_view(
+    kg_dict: dict,
+    chunks: list[Any] | None = None,
+    include_sources: bool = False,
+) -> dict:
     """
     User KG dict를 사용자 노출용으로 가공한다 (세션 종료 후 노출).
 
@@ -483,8 +507,9 @@ def strip_checklist_for_user_view(kg_dict: dict) -> dict:
     프론트에서 "어느 항목을 잘 설명했고, 어느 항목이 남았는지"를
     시각화할 수 있도록 한다.
 
-    제거 : source_quote (학습자료 원문 인용 — 정답 누출 방지)
-    노출 : checklist[*].{item, met}  ← Reference 원본 항목 + 평가 결과 머지
+    기본 노출 : checklist[*].{item, met}
+    근거 노출 : include_sources=True일 때 source_quote, page_number 추가.
+               page_number는 source_quote가 포함된 청크에서 계산한다.
     추가 : met_count / total_count
     """
     safe_nodes = []
@@ -499,13 +524,22 @@ def strip_checklist_for_user_view(kg_dict: dict) -> dict:
             for r in evaluator_result
         }
 
-        merged = [
-            {
+        merged = []
+        for ck in original_checklist:
+            item = {
                 "item": ck.get("item", ""),
                 "met":  met_by_item.get(ck.get("item", ""), False),
             }
-            for ck in original_checklist
-        ]
+            if include_sources:
+                source_quote = ck.get("source_quote", "")
+                page_number = ck.get("page_number")
+                item["source_quote"] = source_quote
+                item["page_number"] = (
+                    page_number
+                    if page_number is not None
+                    else _find_source_page_number(source_quote, chunks)
+                )
+            merged.append(item)
 
         safe = {
             k: v for k, v in node.items()

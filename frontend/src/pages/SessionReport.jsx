@@ -83,11 +83,12 @@ export default function SessionReport() {
   const [afterEdges, setAfterEdges] = useState([]);
   const [kgDims, setKgDims]         = useState({ width: 420, height: 310 });
   const [selectedNode, setSelectedNode] = useState(null);
-  const [kgLoading, setKgLoading]   = useState(true);
+  const [expandedEvidenceKey, setExpandedEvidenceKey] = useState(null);
+  const [kgLoading, setKgLoading]   = useState(Boolean(document_id));
   const checklistRef = useRef(null);
 
   useEffect(() => {
-    if (!document_id) { setKgLoading(false); return; }
+    if (!document_id) return;
     api.getUserKG(document_id).then(data => {
       const nodes = data.user_kg?.nodes || [];
       const edges = data.user_kg?.edges || [];
@@ -105,8 +106,14 @@ export default function SessionReport() {
     .map(([k, v]) => ({ label: SCORE_LABELS[k], score: v, max: 3 }));
 
   function handleNodeClick(node) {
+    setExpandedEvidenceKey(null);
     setSelectedNode(prev => prev?.id === node.id ? null : node);
     setTimeout(() => checklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+  }
+
+  function handleCloseChecklist() {
+    setSelectedNode(null);
+    setExpandedEvidenceKey(null);
   }
 
   return (
@@ -209,7 +216,7 @@ export default function SessionReport() {
                     {STATUS_LABEL[selectedNode.status]}
                   </span>
                 </div>
-                <button className="ncp-close-btn" onClick={() => setSelectedNode(null)}>✕</button>
+                <button className="ncp-close-btn" onClick={handleCloseChecklist}>✕</button>
               </div>
               {selectedNode.status === 'missing' || !selectedNode.checklist?.length ? (
                 <p className="ncp-missing-msg">이 노드는 세션에서 언급되지 않았습니다.</p>
@@ -218,12 +225,34 @@ export default function SessionReport() {
                   {selectedNode.checklist.map((item, i) => {
                     const cls = item.contradicted ? 'contradicted' : item.met ? 'met' : 'unmet';
                     const icon = item.contradicted ? '⚠' : item.met ? '✓' : '✗';
+                    const evidenceKey = `${selectedNode.id}-${i}`;
+                    const isEvidenceOpen = expandedEvidenceKey === evidenceKey;
+                    const hasSourceQuote = Boolean(item.source_quote);
+                    const hasPageNumber = item.page_number !== null && item.page_number !== undefined;
                     return (
                       <div key={i} className={`ncp-item ${cls}`}>
                         <span className="ncp-check-icon">{icon}</span>
                         <div className="ncp-item-body">
-                          <p className="ncp-item-text">{item.item}</p>
-                          {item.source_quote && <p className="ncp-item-quote">"{item.source_quote}"</p>}
+                          <div className="ncp-item-main">
+                            <p className="ncp-item-text">{item.item}</p>
+                            {hasSourceQuote && (
+                              <button
+                                className={`ncp-source-btn ${hasPageNumber ? '' : 'no-page'}`}
+                                onClick={() => setExpandedEvidenceKey(isEvidenceOpen ? null : evidenceKey)}
+                                aria-expanded={isEvidenceOpen}
+                              >
+                                {hasPageNumber ? `p.${item.page_number}` : '근거'}
+                              </button>
+                            )}
+                          </div>
+                          {isEvidenceOpen && hasSourceQuote && (
+                            <div className="ncp-evidence">
+                              <span className="ncp-evidence-label">
+                                PDF 근거{hasPageNumber ? ` · p.${item.page_number}` : ''}
+                              </span>
+                              <p className="ncp-item-quote">"{item.source_quote}"</p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

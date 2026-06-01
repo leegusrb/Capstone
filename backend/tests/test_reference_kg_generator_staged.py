@@ -22,6 +22,33 @@ def test_node_candidate_consensus_normalizes_and_filters_rare_nodes():
     assert kg._merge_node_candidate_runs(runs) == ["딥러닝"]
 
 
+def test_parser_rejects_page_marker_nodes():
+    candidates = kg._parse_node_candidates({
+        "nodes": [
+            {"id": "[page_number=1]", "source_quote": "[page_number=1]"},
+            {"id": "딥러닝", "source_quote": "딥러닝은 여러 층을 사용한다."},
+        ],
+    })
+
+    assert [node.id for node in candidates] == ["딥러닝"]
+
+    parsed = kg._parse_to_dataclass({
+        "nodes": [
+            {
+                "id": "[page_number=1]",
+                "checklist": [{"item": "페이지를 명시", "source_quote": "[page_number=1]"}],
+            },
+            {
+                "id": "딥러닝",
+                "checklist": [{"item": "딥러닝을 명시", "source_quote": "딥러닝은 여러 층을 사용한다."}],
+            },
+        ],
+        "edges": [],
+    })
+
+    assert [node.id for node in parsed.nodes] == ["딥러닝"]
+
+
 def test_detail_parser_rejects_nodes_and_edges_outside_allowed_set():
     data = {
         "nodes": [
@@ -50,6 +77,71 @@ def test_detail_parser_rejects_nodes_and_edges_outside_allowed_set():
     assert [(edge.source, edge.relation, edge.target) for edge in parsed.edges] == [
         ("A", "포함한다", "B"),
     ]
+
+
+def test_detail_parser_preserves_checklist_page_number():
+    data = {
+        "nodes": [
+            {
+                "id": "A",
+                "checklist": [
+                    {
+                        "item": "A를 명시",
+                        "source_quote": "A는 핵심이다.",
+                        "page_number": 2,
+                    }
+                ],
+            },
+        ],
+        "edges": [],
+    }
+
+    parsed = kg._parse_to_dataclass(data)
+
+    assert parsed.nodes[0].checklist[0].page_number == 2
+
+
+def test_chunks_are_formatted_with_page_markers():
+    chunks = [
+        {"content": "A는 핵심이다.", "page_number": 2},
+        {"content": "B는 하위 개념이다.", "page_number": 3},
+    ]
+
+    text = kg._format_chunks_for_prompt(kg._normalize_source_chunks(chunks))
+
+    assert "[page_number=2]" in text
+    assert "[page_number=3]" in text
+    assert "A는 핵심이다." in text
+
+
+def test_root_concept_ignores_page_marker():
+    text = "[page_number=1]\n딥러닝 개요\n딥러닝은 여러 층을 사용한다."
+
+    assert kg._extract_root_concept(text) == "딥러닝 개요"
+
+
+def test_attach_root_connects_existing_root_to_top_nodes():
+    graph = nx.DiGraph()
+    graph.add_node("Root", status="reference", checklist=[])
+    graph.add_node("A", status="reference", checklist=[])
+
+    graph = kg._attach_root_node(graph, "Root")
+
+    assert graph.has_edge("Root", "A")
+    assert nx.has_path(graph, "Root", "A")
+
+
+def test_attach_root_connects_cyclic_component_without_top_node():
+    graph = nx.DiGraph()
+    graph.add_node("A", status="reference", checklist=[])
+    graph.add_node("B", status="reference", checklist=[])
+    graph.add_edge("A", "B", relation="포함한다", status="reference")
+    graph.add_edge("B", "A", relation="포함한다", status="reference")
+
+    graph = kg._attach_root_node(graph, "Root")
+
+    assert nx.has_path(graph, "Root", "A")
+    assert nx.has_path(graph, "Root", "B")
 
 
 def test_serialize_kg_order_is_stable():
