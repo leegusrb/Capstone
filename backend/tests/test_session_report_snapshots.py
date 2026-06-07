@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from types import SimpleNamespace
 
+import networkx as nx
 import pytest
 from fastapi import HTTPException
 
@@ -9,6 +10,8 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///tmp/test.db")
 os.environ.setdefault("OPENAI_API_KEY", "test")
 
 from app.api.v1 import sessions
+from app.services import session_service
+from app.services.evaluator_llm import EvaluatorResult, MAX_TURNS, RubricScores
 from app.services.session_service import _save_session_record
 
 
@@ -137,3 +140,61 @@ def test_get_session_report_404_for_missing_record():
         sessions.api_get_session_report(999, db=FakeDB(None), current_user=CURRENT_USER)
 
     assert exc.value.status_code == 404
+
+
+def test_process_turn_ends_session_at_turn_limit(monkeypatch):
+    reference_kg = nx.DiGraph()
+    reference_kg.add_node(
+        "TCP",
+        status="reference",
+        checklist=[{"item": "TCP 설명", "source_quote": "TCP는 연결 지향 프로토콜이다."}],
+    )
+    user_kg = nx.DiGraph()
+    user_kg.add_node(
+        "TCP",
+        status="missing",
+        checklist=[{"item": "TCP 설명", "source_quote": "TCP는 연결 지향 프로토콜이다."}],
+        checklist_result=[],
+        completion_ratio=0.0,
+    )
+
+    saved = {}
+
+    def save_record(**kwargs):
+        saved.update(kwargs)
+        return 99
+
+    def fail_question(*_args, **_kwargs):
+        raise AssertionError("turn limit should not request another student question")
+
+    monkeypatch.setattr(session_service, "load_kg_from_db", lambda _db, _document_id: (reference_kg, user_kg))
+    monkeypatch.setattr(session_service, "_retrieve_rag_chunks", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        session_service,
+        "evaluate_explanation",
+        lambda **_kwargs: EvaluatorResult(updated_user_kg={"nodes": [], "edges": []}, misconceptions=[]),
+    )
+    monkeypatch.setattr(session_service, "compute_rubric_scores", lambda *_args, **_kwargs: RubricScores(1, 1, 1, 1))
+    monkeypatch.setattr(session_service, "save_kg_to_db", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(session_service, "_build_user_kg_view", lambda *_args, **_kwargs: {"nodes": [], "edges": []})
+    monkeypatch.setattr(session_service, "_save_session_record", save_record)
+    monkeypatch.setattr(session_service, "generate_session_closing_message", lambda **_kwargs: "세션을 마무리할게요.")
+    monkeypatch.setattr(session_service, "generate_student_question", fail_question)
+
+    result = session_service.process_turn(
+        topic="TCP",
+        document_id=1,
+        user_explanation="TCP 설명",
+        conversation_history=[],
+        session_history=[],
+        turn_count=MAX_TURNS,
+        db=object(),
+        initial_user_kg={"nodes": [], "edges": []},
+    )
+
+    assert result.is_session_done is True
+    assert result.termination_reason == "turn_limit"
+    assert result.next_question is None
+    assert result.session_record_id == 99
+    assert saved["termination_reason"] == "turn_limit"
+    assert saved["turn_count"] == MAX_TURNS

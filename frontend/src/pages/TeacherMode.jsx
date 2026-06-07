@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { api, getMisconceptionText } from '../api';
 import './ChatMode.css';
@@ -35,6 +35,21 @@ export default function TeacherMode() {
   const isRecording = voiceStatus === 'recording';
   const isTranscribing = voiceStatus === 'transcribing';
 
+  const initSession = useCallback(async () => {
+    try {
+      const res = await api.startSession(document_id, topic);
+      const t = now();
+      const firstMsg = { role: 'ai', text: res.first_question, time: t };
+      setMessages([firstMsg]);
+      conversationHistory.current = [{ role: 'assistant', content: res.first_question }];
+      initialUserKG.current = res.initial_user_kg || null;
+    } catch (e) {
+      setError(e.message || '세션 시작에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  }, [document_id, topic]);
+
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
@@ -45,7 +60,7 @@ export default function TeacherMode() {
       return;
     }
     initSession();
-  }, []);
+  }, [document_id, initSession]);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -60,21 +75,6 @@ export default function TeacherMode() {
       stopVoiceStream();
     };
   }, []);
-
-  async function initSession() {
-    try {
-      const res = await api.startSession(document_id, topic);
-      const t = now();
-      const firstMsg = { role: 'ai', text: res.first_question, time: t };
-      setMessages([firstMsg]);
-      conversationHistory.current = [{ role: 'assistant', content: res.first_question }];
-      initialUserKG.current = res.initial_user_kg || null;
-    } catch (e) {
-      setError(e.message || '세션 시작에 실패했습니다.');
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function send() {
     if (!input.trim() || typing || sessionDone) return;

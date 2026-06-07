@@ -4,17 +4,22 @@ LLM 호출 없이 직렬화, 상태 관리, 비교 연산 검증
 """
 
 import json
+import os
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///tmp/test.db")
+os.environ.setdefault("OPENAI_API_KEY", "test")
+
 from app.services.kg_service import (
-    NodeStatus, EdgeStatus,
+    NodeStatus,
     serialize_kg, deserialize_kg,
-    create_empty_user_kg,
-    sync_user_kg_with_reference,
+    init_user_kg,
     update_user_kg_from_evaluator,
-    get_partial_nodes_and_edges,
+    get_student_context,
     get_missing_nodes,
     get_kg_coverage,
     get_misconceptions,
 )
+from app.services.evaluator_llm import compute_rubric_scores
 import networkx as nx
 
 
@@ -26,13 +31,19 @@ def make_reference_kg() -> nx.DiGraph:
     g = nx.DiGraph()
     nodes = ["TCP", "연결 지향", "3-way handshake", "흐름 제어", "혼잡 제어", "ACK"]
     for n in nodes:
-        g.add_node(n, status="reference")
+        g.add_node(
+            n,
+            status="reference",
+            checklist=[
+                {"item": f"{n} 설명", "source_quote": f"{n}는 학습 자료의 핵심 개념이다."}
+            ],
+        )
     edges = [
-        ("TCP", "연결 지향",     "특성"),
-        ("TCP", "3-way handshake", "연결 방식"),
-        ("TCP", "흐름 제어",     "포함"),
-        ("TCP", "혼잡 제어",     "포함"),
-        ("TCP", "ACK",           "사용"),
+        ("TCP", "연결 지향",     "특성을 가진다"),
+        ("TCP", "3-way handshake", "사용한다"),
+        ("TCP", "흐름 제어",     "포함한다"),
+        ("TCP", "혼잡 제어",     "포함한다"),
+        ("TCP", "ACK",           "사용한다"),
     ]
     for src, tgt, rel in edges:
         g.add_edge(src, tgt, relation=rel, status="reference")
@@ -64,8 +75,7 @@ def test_serialize_roundtrip():
 
 def test_sync_user_kg():
     ref_kg  = make_reference_kg()
-    user_kg = create_empty_user_kg()
-    user_kg = sync_user_kg_with_reference(user_kg, ref_kg)
+    user_kg = init_user_kg(ref_kg)
 
     missing = get_missing_nodes(user_kg)
     assert set(missing) == {"TCP", "연결 지향", "3-way handshake", "흐름 제어", "혼잡 제어", "ACK"}
@@ -79,20 +89,34 @@ def test_sync_user_kg():
 
 def test_update_user_kg():
     ref_kg  = make_reference_kg()
-    user_kg = create_empty_user_kg()
-    user_kg = sync_user_kg_with_reference(user_kg, ref_kg)
+    user_kg = init_user_kg(ref_kg)
 
     # Evaluator가 반환한 결과 (사용자가 TCP, 연결 지향, 흐름 제어를 설명함)
     evaluator_result = {
         "updated_user_kg": {
             "nodes": [
-                {"id": "TCP",      "status": "confirmed"},
-                {"id": "연결 지향", "status": "confirmed"},
-                {"id": "흐름 제어", "status": "partial"},
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "TCP 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
+                {
+                    "id": "연결 지향",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "연결 지향 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
+                {
+                    "id": "흐름 제어",
+                    "status": "partial",
+                    "checklist_result": [{"item": "흐름 제어 설명", "met": False}],
+                    "completion_ratio": 0.0,
+                },
             ],
             "edges": [
-                {"source": "TCP", "relation": "특성",  "target": "연결 지향", "status": "confirmed"},
-                {"source": "TCP", "relation": "포함",  "target": "흐름 제어", "status": "partial"},
+                {"source": "TCP", "relation": "특성을 가진다", "target": "연결 지향", "status": "confirmed"},
+                {"source": "TCP", "relation": "포함한다", "target": "흐름 제어", "status": "partial"},
             ],
         },
         "misconceptions": [],
@@ -116,24 +140,33 @@ def test_update_user_kg():
 
 def test_get_partial_for_student():
     ref_kg  = make_reference_kg()
-    user_kg = create_empty_user_kg()
-    user_kg = sync_user_kg_with_reference(user_kg, ref_kg)
+    user_kg = init_user_kg(ref_kg)
 
     evaluator_result = {
         "updated_user_kg": {
             "nodes": [
-                {"id": "TCP",      "status": "confirmed"},
-                {"id": "흐름 제어", "status": "partial"},
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "TCP 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
+                {
+                    "id": "흐름 제어",
+                    "status": "partial",
+                    "checklist_result": [{"item": "흐름 제어 설명", "met": False}],
+                    "completion_ratio": 0.0,
+                },
             ],
             "edges": [
-                {"source": "TCP", "relation": "포함", "target": "흐름 제어", "status": "partial"},
+                {"source": "TCP", "relation": "포함한다", "target": "흐름 제어", "status": "partial"},
             ],
         },
         "misconceptions": [],
     }
     user_kg = update_user_kg_from_evaluator(user_kg, evaluator_result)
 
-    student_context = get_partial_nodes_and_edges(user_kg)
+    student_context = get_student_context(user_kg)
 
     # missing 노드가 절대 포함되지 않아야 함
     all_nodes = student_context["confirmed_nodes"] + student_context["partial_nodes"]
@@ -154,15 +187,29 @@ def test_get_partial_for_student():
 
 def test_kg_coverage():
     ref_kg  = make_reference_kg()
-    user_kg = create_empty_user_kg()
-    user_kg = sync_user_kg_with_reference(user_kg, ref_kg)
+    user_kg = init_user_kg(ref_kg)
 
     evaluator_result = {
         "updated_user_kg": {
             "nodes": [
-                {"id": "TCP",            "status": "confirmed"},
-                {"id": "연결 지향",       "status": "confirmed"},
-                {"id": "3-way handshake", "status": "confirmed"},
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "TCP 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
+                {
+                    "id": "연결 지향",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "연결 지향 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
+                {
+                    "id": "3-way handshake",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "3-way handshake 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
             ],
             "edges": [],
         },
@@ -180,11 +227,44 @@ def test_kg_coverage():
 
 
 # ──────────────────────────────────────────────
-# 테스트 6 — 오개념 기록
+# 테스트 6 — 구조 노드는 평가/커버리지에서 제외
+# ──────────────────────────────────────────────
+
+def test_evaluation_exempt_nodes_do_not_affect_coverage_or_scores():
+    ref_kg = nx.DiGraph()
+    ref_kg.add_node("Root", status="reference", checklist=[])
+    ref_kg.add_node(
+        "TCP",
+        status="reference",
+        checklist=[{"item": "TCP 설명", "source_quote": "TCP는 연결 지향 프로토콜이다."}],
+    )
+    ref_kg.add_node(
+        "ACK",
+        status="reference",
+        checklist=[{"item": "ACK 설명", "source_quote": "ACK는 응답 확인에 사용된다."}],
+    )
+    ref_kg.add_edge("Root", "TCP", relation="포함한다", status="reference")
+    ref_kg.add_edge("Root", "ACK", relation="포함한다", status="reference")
+
+    user_kg = init_user_kg(ref_kg)
+    user_kg.nodes["TCP"]["status"] = NodeStatus.CONFIRMED
+
+    coverage = get_kg_coverage(user_kg, ref_kg)
+    scores = compute_rubric_scores(user_kg, ref_kg)
+
+    assert "Root" not in get_missing_nodes(user_kg)
+    assert coverage["confirmed_count"] == 1
+    assert coverage["total_count"] == 2
+    assert coverage["coverage_percent"] == 50.0
+    assert scores.concept == 2
+
+
+# ──────────────────────────────────────────────
+# 테스트 7 — 오개념 기록
 # ──────────────────────────────────────────────
 
 def test_misconceptions():
-    user_kg = create_empty_user_kg()
+    user_kg = nx.DiGraph()
     evaluator_result = {
         "updated_user_kg": {"nodes": [], "edges": []},
         "misconceptions": [

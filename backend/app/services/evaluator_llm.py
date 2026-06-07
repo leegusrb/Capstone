@@ -27,6 +27,7 @@ from app.services.kg_service import (
     get_edges_by_status,
     get_missing_nodes,
     get_nodes_by_status,
+    is_evaluation_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -279,7 +280,7 @@ def _format_reference_kg_with_checklist(reference_kg: nx.DiGraph) -> str:
 
     blocks = []
     for node_id, attrs in reference_kg.nodes(data=True):
-        if node_id == "__misconceptions__":
+        if not is_evaluation_node(node_id, attrs):
             continue
         checklist = attrs.get("checklist", [])
         lines = [f"[노드: {node_id}]"]
@@ -301,6 +302,10 @@ def _format_reference_edges(reference_kg: nx.DiGraph) -> str:
     edges = [
         f"{src} -[{attrs.get('relation', '?')}]-> {tgt}"
         for src, tgt, attrs in reference_kg.edges(data=True)
+        if (
+            is_evaluation_node(src, reference_kg.nodes[src])
+            and is_evaluation_node(tgt, reference_kg.nodes[tgt])
+        )
     ]
     return "\n".join(edges) if edges else "(엣지 없음)"
 
@@ -340,17 +345,26 @@ def compute_rubric_scores(
                    ≥3→3 / 2→2 / 1→1 / 0→0
     """
     # ── concept ──
-    valid_ref_nodes = [n for n in reference_kg.nodes() if not str(n).startswith("__")]
+    valid_ref_nodes = {
+        n for n, attrs in reference_kg.nodes(data=True)
+        if is_evaluation_node(n, attrs)
+    }
     total_nodes = len(valid_ref_nodes)
-    confirmed = get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)
-    partial   = get_nodes_by_status(user_kg, NodeStatus.PARTIAL)
+    confirmed = [
+        n for n in valid_ref_nodes
+        if n in user_kg and user_kg.nodes[n].get("status") == NodeStatus.CONFIRMED
+    ]
+    partial = [
+        n for n in valid_ref_nodes
+        if n in user_kg and user_kg.nodes[n].get("status") == NodeStatus.PARTIAL
+    ]
     concept_score = (1.0 * len(confirmed) + 0.5 * len(partial)) / total_nodes if total_nodes > 0 else 0.0
     concept = 3 if concept_score >= 0.8 else 2 if concept_score >= 0.5 else 1 if concept_score >= 0.2 else 0
 
     # ── accuracy ──
     misconception_nodes = [
-        n for n, attrs in user_kg.nodes(data=True)
-        if attrs.get("status") == NodeStatus.MISCONCEPTION and not str(n).startswith("__")
+        n for n in valid_ref_nodes
+        if n in user_kg and user_kg.nodes[n].get("status") == NodeStatus.MISCONCEPTION
     ]
     misc_count = len(misconception_nodes)
     mentioned_node_count = len(confirmed) + len(partial) + misc_count

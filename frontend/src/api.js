@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8000/api/v1';
+import { API_BASE_URL } from './config';
 
 function getCurrentUserId() {
   try {
@@ -14,7 +14,7 @@ function withAuthHeaders(headers = {}) {
 }
 
 async function req(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: withAuthHeaders({
       'Content-Type': 'application/json',
@@ -33,7 +33,7 @@ export const api = {
   uploadDocument: (file) => {
     const form = new FormData();
     form.append('file', file);
-    return fetch(`${BASE}/documents/upload`, {
+    return fetch(`${API_BASE_URL}/documents/upload`, {
       method: 'POST',
       headers: withAuthHeaders(),
       body: form,
@@ -87,7 +87,7 @@ export const api = {
     form.append('file', audioBlob, `teacher-mode.${ext}`);
     form.append('topic', topic || '');
 
-    return fetch(`${BASE}/speech/transcribe`, {
+    return fetch(`${API_BASE_URL}/speech/transcribe`, {
       method: 'POST',
       headers: withAuthHeaders(),
       body: form,

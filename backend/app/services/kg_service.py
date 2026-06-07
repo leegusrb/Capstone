@@ -172,6 +172,7 @@ def init_user_kg(reference_kg: nx.DiGraph) -> nx.DiGraph:
             checklist=attrs.get("checklist", []),
             checklist_result=[],
             completion_ratio=0.0,
+            evaluation_exempt=bool(attrs.get("evaluation_exempt", False)),
         )
 
     for src, tgt, attrs in reference_kg.edges(data=True):
@@ -336,10 +337,25 @@ def update_user_kg_from_evaluator(
 # 7. 조회 헬퍼
 # ──────────────────────────────────────────────
 
+def is_evaluation_node(node_id: Any, attrs: dict | None = None) -> bool:
+    """루트/내부 메타 노드처럼 평가 대상이 아닌 노드를 제외한다."""
+    if str(node_id).startswith("__"):
+        return False
+    if attrs and attrs.get("evaluation_exempt", False):
+        return False
+    if attrs is not None and attrs.get("checklist") == []:
+        return False
+    return True
+
+
+def _node_attrs(graph: nx.DiGraph, node_id: Any) -> dict:
+    return graph.nodes[node_id] if node_id in graph else {}
+
+
 def get_nodes_by_status(user_kg: nx.DiGraph, status: NodeStatus) -> list[str]:
     return [
         n for n, attrs in user_kg.nodes(data=True)
-        if attrs.get("status") == status and n != "__misconceptions__"
+        if attrs.get("status") == status and is_evaluation_node(n, attrs)
     ]
 
 
@@ -347,7 +363,11 @@ def get_edges_by_status(user_kg: nx.DiGraph, status: EdgeStatus) -> list[dict]:
     return [
         {"source": src, "relation": attrs.get("relation", ""), "target": tgt}
         for src, tgt, attrs in user_kg.edges(data=True)
-        if attrs.get("status") == status
+        if (
+            attrs.get("status") == status
+            and is_evaluation_node(src, _node_attrs(user_kg, src))
+            and is_evaluation_node(tgt, _node_attrs(user_kg, tgt))
+        )
     ]
 
 
@@ -404,8 +424,17 @@ def get_kg_coverage(user_kg: nx.DiGraph, reference_kg: nx.DiGraph) -> dict:
     KG 커버리지 계산.
     커버리지 = confirmed 노드 수 / Reference KG 전체 노드 수 × 100
     """
-    total = reference_kg.number_of_nodes()
-    confirmed = len(get_nodes_by_status(user_kg, NodeStatus.CONFIRMED))
+    reference_nodes = {
+        n for n, attrs in reference_kg.nodes(data=True)
+        if is_evaluation_node(n, attrs)
+    }
+    total = len(reference_nodes)
+    confirmed = sum(
+        1
+        for node_id in reference_nodes
+        if node_id in user_kg
+        and user_kg.nodes[node_id].get("status") == NodeStatus.CONFIRMED
+    )
     coverage = round(confirmed / total * 100, 1) if total > 0 else 0.0
     return {
         "confirmed_count": confirmed,
@@ -452,7 +481,7 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
     """
     view = []
     for node_id, attrs in user_kg.nodes(data=True):
-        if str(node_id).startswith("__"):
+        if not is_evaluation_node(node_id, attrs):
             continue
 
         original_checklist = attrs.get("checklist", [])
