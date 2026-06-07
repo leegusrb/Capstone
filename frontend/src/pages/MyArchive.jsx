@@ -268,6 +268,18 @@ export default function MyArchive() {
                           >
                             리포트 보기
                           </button>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => navigate('/student', {
+                              state: {
+                                document_id: selectedDoc.id,
+                                topic: sess.topic,
+                                filename: selectedDoc.filename,
+                              },
+                            })}
+                          >
+                            학생 모드로 질문하기
+                          </button>
                         </div>
                       </div>
                     );
@@ -275,15 +287,32 @@ export default function MyArchive() {
                 </>
               )}
 
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%', justifyContent: 'center', marginTop: 16 }}
-                onClick={() => navigate('/teacher', {
-                  state: { document_id: selectedDoc.id, topic: docName(selectedDoc.filename) },
-                })}
-              >
-                이 자료로 다시 학습하기
-              </button>
+              <div className="session-action-row">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => navigate('/teacher', {
+                    state: {
+                      document_id: selectedDoc.id,
+                      topic: docName(selectedDoc.filename),
+                      filename: selectedDoc.filename,
+                    },
+                  })}
+                >
+                  이 자료로 다시 학습하기
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => navigate('/student', {
+                    state: {
+                      document_id: selectedDoc.id,
+                      topic: docName(selectedDoc.filename),
+                      filename: selectedDoc.filename,
+                    },
+                  })}
+                >
+                  학생 모드로 질문하기
+                </button>
+              </div>
             </div>
           )}
         </div>

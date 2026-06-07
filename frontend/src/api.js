@@ -53,6 +53,13 @@ export const api = {
     }),
   getSessionReport: (id) => req(`/sessions/${id}/report`),
 
+  // 학생모드 Q&A
+  askStudyTutor: (body) =>
+    req('/study-chat/ask', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   // 음성 인식
   transcribeAudio: (audioBlob, topic) => {
     const form = new FormData();

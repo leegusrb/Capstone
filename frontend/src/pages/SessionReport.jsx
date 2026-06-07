@@ -408,6 +408,10 @@ export default function SessionReport() {
           onClick={() => navigate('/teacher', { state: { document_id, topic } })}>
           ↩ 다시 선생님 모드
         </button>
+        <button className="btn btn-primary btn-lg"
+          onClick={() => navigate('/student', { state: { document_id, topic } })}>
+          학생 모드로 질문하기
+        </button>
         <button className="btn btn-ghost btn-lg" onClick={() => navigate('/archive')}>
           저장소로 이동
         </button>
