@@ -22,6 +22,7 @@ export default function MyArchive() {
   const [search, setSearch]       = useState('');
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [loadingSessions, setLoadingSessions] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [error, setError]         = useState('');
 
   useEffect(() => {
@@ -73,6 +74,36 @@ export default function MyArchive() {
   function terminationLabel(reason) {
     const map = { score: '목표 달성', turn_limit: '턴 초과', repetition: '반복 한계', user: '직접 종료' };
     return map[reason] || reason || '-';
+  }
+
+  async function deleteDoc(event, doc) {
+    event.stopPropagation();
+    if (deletingId) return;
+
+    const ok = window.confirm(
+      `"${docName(doc.filename)}" 자료를 삭제할까요?\n해당 자료의 세션 기록과 지식 그래프도 함께 삭제됩니다.`
+    );
+    if (!ok) return;
+
+    setDeletingId(doc.id);
+    setError('');
+    try {
+      await api.deleteDocument(doc.id);
+      setDocs(prev => prev.filter(d => d.id !== doc.id));
+      setSessions(prev => {
+        const next = { ...prev };
+        delete next[doc.id];
+        return next;
+      });
+      if (selected === doc.id) {
+        setSelected(null);
+        setActiveSession(null);
+      }
+    } catch (e) {
+      setError(e.message || '자료 삭제에 실패했습니다.');
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -140,6 +171,15 @@ export default function MyArchive() {
                         <span>세션 {(sessions[doc.id] || []).length}회</span>
                       </div>
                     </div>
+                    <button
+                      className="file-delete-btn"
+                      onClick={(event) => deleteDoc(event, doc)}
+                      disabled={deletingId === doc.id}
+                      title="자료 삭제"
+                      aria-label={`${docName(doc.filename)} 삭제`}
+                    >
+                      {deletingId === doc.id ? '삭제 중' : '삭제'}
+                    </button>
                   </div>
                   <div className="file-coverage">
                     <div className="coverage-label">
@@ -221,6 +261,13 @@ export default function MyArchive() {
                               <span>오개념: <strong style={{ color: '#ef4444' }}>{sess.misconceptions.length}개</strong></span>
                             )}
                           </div>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ marginTop: 14 }}
+                            onClick={() => navigate(`/report?session_id=${sess.id}`)}
+                          >
+                            리포트 보기
+                          </button>
                         </div>
                       </div>
                     );

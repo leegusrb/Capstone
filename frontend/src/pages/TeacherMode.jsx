@@ -25,6 +25,7 @@ export default function TeacherMode() {
 
   const conversationHistory = useRef([]);
   const sessionHistory = useRef([]);
+  const initialUserKG = useRef(null);
   const chatRef = useRef();
   const initialized = useRef(false);
   const mediaRecorderRef = useRef(null);
@@ -67,6 +68,7 @@ export default function TeacherMode() {
       const firstMsg = { role: 'ai', text: res.first_question, time: t };
       setMessages([firstMsg]);
       conversationHistory.current = [{ role: 'assistant', content: res.first_question }];
+      initialUserKG.current = res.initial_user_kg || null;
     } catch (e) {
       setError(e.message || '세션 시작에 실패했습니다.');
     } finally {
@@ -97,6 +99,7 @@ export default function TeacherMode() {
         conversation_history: conversationHistory.current,
         session_history: sessionHistory.current,
         turn_count: newTurns,
+        initial_user_kg: initialUserKG.current,
       });
 
       sessionHistory.current = [...sessionHistory.current, res.scores];
@@ -135,6 +138,7 @@ export default function TeacherMode() {
         document_id,
         topic,
         session_history: sessionHistory.current,
+        initial_user_kg: initialUserKG.current,
       });
       navigateToReport(res);
     } catch {
@@ -143,8 +147,10 @@ export default function TeacherMode() {
   }
 
   function navigateToReport(result) {
-    navigate('/report', {
+    const sessionId = result?.session_record_id;
+    navigate(sessionId ? `/report?session_id=${sessionId}` : '/report', {
       state: {
+        session_record_id: sessionId,
         document_id,
         topic,
         scores: result?.scores || {},

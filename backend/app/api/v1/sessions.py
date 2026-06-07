@@ -13,6 +13,8 @@ main.py에 다음 한 줄 추가:
   app.include_router(sessions.router, prefix="/api/v1")
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -20,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.core.exceptions import DocumentNotFoundError
 from app.models.document import Document
+from app.models.session_record import SessionRecord
 from app.services.session_service import (
     TurnResult,
     end_session_early,
@@ -58,6 +61,10 @@ class TurnRequest(BaseModel):
         ),
     )
     turn_count: int = Field(default=1, ge=1, description="현재 턴 번호 (1-indexed)")
+    initial_user_kg: dict | None = Field(
+        default=None,
+        description="세션 시작 직전 User KG 스냅샷. 세션 종료 리포트의 BEFORE 그래프로 저장.",
+    )
 
 
 class EndSessionRequest(BaseModel):
@@ -67,12 +74,17 @@ class EndSessionRequest(BaseModel):
         default=[],
         description="지금까지의 점수 기록 리스트",
     )
+    initial_user_kg: dict | None = Field(
+        default=None,
+        description="세션 시작 직전 User KG 스냅샷. 세션 종료 리포트의 BEFORE 그래프로 저장.",
+    )
 
 
 # ── 응답 스키마 ────────────────────────────────────────────
 
 class StartSessionResponse(BaseModel):
     first_question: str
+    initial_user_kg: dict | None = None
 
 
 class TurnResponse(BaseModel):
@@ -93,6 +105,7 @@ class TurnResponse(BaseModel):
     # KG 현황 (프론트엔드 실시간 시각화용)
     coverage:      dict      | None = None
     missing_nodes: list[str] | None = None
+    session_record_id: int | None = None
 
 
 class EndSessionResponse(BaseModel):
@@ -102,6 +115,21 @@ class EndSessionResponse(BaseModel):
     closing_message: str
     coverage:        dict
     missing_nodes:   list[str]
+    session_record_id: int | None = None
+
+
+class SessionReportResponse(BaseModel):
+    document_id: int
+    topic: str
+    scores: dict
+    total: int
+    turn_count: int
+    coverage: dict
+    missing_nodes: list[str]
+    misconceptions: list
+    user_kg_before: dict | None = None
+    user_kg_after: dict | None = None
+    created_at: datetime | None = None
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────
@@ -148,6 +176,7 @@ def api_start_session(
     )
     return StartSessionResponse(
         first_question=result.first_question,
+        initial_user_kg=result.initial_user_kg,
     )
 
 
@@ -183,6 +212,7 @@ def api_process_turn(
         session_history=body.session_history,
         turn_count=body.turn_count,
         db=db,
+        initial_user_kg=body.initial_user_kg,
     )
 
     return TurnResponse(
@@ -196,6 +226,7 @@ def api_process_turn(
         closing_message=result.closing_message,
         coverage=result.coverage,
         missing_nodes=result.missing_nodes,
+        session_record_id=result.session_record_id,
     )
 
 
@@ -218,6 +249,7 @@ def api_end_session(
         document_id=body.document_id,
         session_history=body.session_history,
         db=db,
+        initial_user_kg=body.initial_user_kg,
     )
 
     return EndSessionResponse(
@@ -227,4 +259,38 @@ def api_end_session(
         closing_message=result.closing_message or "",
         coverage=result.coverage or {},
         missing_nodes=result.missing_nodes or [],
+        session_record_id=result.session_record_id,
+    )
+
+
+@router.get("/{session_id}/report", response_model=SessionReportResponse)
+def api_get_session_report(
+    session_id: int,
+    db: Session = Depends(get_db),
+):
+    """저장된 세션 리포트 데이터를 반환한다."""
+    record = db.query(SessionRecord).filter(SessionRecord.id == session_id).first()
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SessionRecord ID {session_id}를 찾을 수 없습니다.",
+        )
+
+    summary = record.session_summary or {}
+    coverage = summary.get("coverage") or {
+        "coverage_percent": record.coverage_percent or 0.0,
+    }
+
+    return SessionReportResponse(
+        document_id=record.document_id,
+        topic=record.topic,
+        scores=record.scores or {},
+        total=record.total_score,
+        turn_count=record.turn_count,
+        coverage=coverage,
+        missing_nodes=summary.get("missing_nodes") or [],
+        misconceptions=record.misconceptions or [],
+        user_kg_before=record.user_kg_before,
+        user_kg_after=record.user_kg_after,
+        created_at=record.created_at,
     )

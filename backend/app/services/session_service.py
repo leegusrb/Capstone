@@ -14,11 +14,12 @@ Student LLM과 Evaluator LLM을 연결하는 세션 오케스트레이터.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy.orm import Session as DBSession
 
+from app.models.chunk import Chunk
 from app.models.session_record import SessionRecord
 from app.services.kg_service import (
     get_best_scores,
@@ -27,6 +28,8 @@ from app.services.kg_service import (
     get_student_context,
     load_kg_from_db,
     save_kg_to_db,
+    serialize_kg,
+    strip_checklist_for_user_view,
     update_best_scores,
     update_user_kg_from_evaluator,
 )
@@ -69,12 +72,14 @@ class TurnResult:
     missing_nodes: Optional[list[str]] = None
     evaluator_kg_updates: Optional[list[dict]] = None  # Evaluator가 반환한 raw 노드 상태
     student_context: Optional[dict] = None  # Student LLM에 전달된 컨텍스트 (디버그용)
+    session_record_id: Optional[int] = None
 
 
 @dataclass
 class StartSessionResult:
     """start_session()의 반환값."""
     first_question: str
+    initial_user_kg: dict
 
 
 # ── RAG 검색 ──────────────────────────────────────────────
@@ -106,6 +111,27 @@ def _retrieve_rag_chunks(
         return [c.content for c in chunks]
 
 
+def _build_user_kg_view(
+    db: DBSession,
+    document_id: int,
+    user_kg,
+    include_sources: bool = False,
+) -> dict:
+    chunks = None
+    if include_sources:
+        chunks = (
+            db.query(Chunk)
+            .filter(Chunk.document_id == document_id)
+            .order_by(Chunk.chunk_index)
+            .all()
+        )
+    return strip_checklist_for_user_view(
+        serialize_kg(user_kg),
+        chunks=chunks,
+        include_sources=include_sources,
+    )
+
+
 # ── 진입점 ─────────────────────────────────────────────────
 
 def start_session(
@@ -135,6 +161,7 @@ def start_session(
 
     return StartSessionResult(
         first_question=student_resp.question,
+        initial_user_kg=_build_user_kg_view(db, document_id, user_kg),
     )
 
 
@@ -146,6 +173,7 @@ def process_turn(
     session_history: list[dict],
     turn_count: int,
     db: DBSession,
+    initial_user_kg: Optional[dict] = None,
     model: str = "gpt-4o-mini",
 ) -> TurnResult:
     # ── 1. 실제 KG 로드 ──
@@ -193,17 +221,18 @@ def process_turn(
     update_best_scores(user_kg, scores.to_dict())
     save_kg_to_db(db, document_id, reference_kg, user_kg)
 
+    score_dict = scores.to_dict()
     total = scores.total
     is_sufficient = total >= SCORE_THRESHOLD
     termination_reason = "score" if is_sufficient else None
-    weak_areas = [cat for cat in SCORE_CATEGORIES if scores.to_dict().get(cat, 0) <= 1]
+    weak_areas = [cat for cat in SCORE_CATEGORIES if score_dict.get(cat, 0) <= 1]
 
     coverage      = get_kg_coverage(user_kg, reference_kg)
     missing_nodes = get_missing_nodes(user_kg)
 
     # ── 6. 세션 종료 분기 ──
     if is_sufficient:
-        updated_history = session_history + [scores.to_dict()]
+        updated_history = session_history + [score_dict]
         summary = build_session_summary(
             session_history=updated_history,
             user_kg=user_kg,
@@ -220,19 +249,22 @@ def process_turn(
             "세션 종료 — 사유: %s | 총점: %d | 커버리지: %.1f%%",
             termination_reason, total, coverage.get("coverage_percent", 0),
         )
-        _save_session_record(
+        session_record_id = _save_session_record(
             db=db,
             document_id=document_id,
             topic=topic,
             total_score=total,
+            scores=score_dict,
             turn_count=turn_count,
             termination_reason=termination_reason,
             coverage_percent=coverage.get("coverage_percent", 0.0),
             misconceptions=[m.get("description", str(m)) for m in eval_result.misconceptions],
             session_summary=summary,
+            user_kg_before=initial_user_kg,
+            user_kg_after=_build_user_kg_view(db, document_id, user_kg, include_sources=True),
         )
         return TurnResult(
-            scores=scores.to_dict(),
+            scores=score_dict,
             total=total,
             misconceptions=eval_result.misconceptions,
             is_session_done=True,
@@ -241,6 +273,7 @@ def process_turn(
             closing_message=closing,
             coverage=coverage,
             missing_nodes=missing_nodes,
+            session_record_id=session_record_id,
         )
 
     # ── 7. 다음 질문 생성 ──
@@ -256,7 +289,7 @@ def process_turn(
     logger.info("턴 %d 완료 — 총점: %d | weak: %s", turn_count, total, weak_areas)
 
     return TurnResult(
-        scores=scores.to_dict(),
+        scores=score_dict,
         total=total,
         misconceptions=eval_result.misconceptions,
         next_question=next_student.question,
@@ -273,24 +306,32 @@ def _save_session_record(
     document_id: int,
     topic: str,
     total_score: int,
+    scores: dict,
     turn_count: int,
     termination_reason: str,
     coverage_percent: float,
     misconceptions: list,
     session_summary: dict,
-) -> None:
+    user_kg_before: Optional[dict],
+    user_kg_after: Optional[dict],
+) -> int:
     record = SessionRecord(
         document_id=document_id,
         topic=topic,
         total_score=total_score,
+        scores=scores,
         turn_count=turn_count,
         termination_reason=termination_reason,
         coverage_percent=coverage_percent,
         misconceptions=misconceptions,
         session_summary=session_summary,
+        user_kg_before=user_kg_before,
+        user_kg_after=user_kg_after,
     )
     db.add(record)
     db.commit()
+    db.refresh(record)
+    return record.id
 
 
 def end_session_early(
@@ -298,6 +339,7 @@ def end_session_early(
     document_id: int,
     session_history: list[dict],
     db: DBSession,
+    initial_user_kg: Optional[dict] = None,
     model: str = "gpt-5.4-mini",
 ) -> TurnResult:
     kgs = load_kg_from_db(db, document_id)
@@ -322,21 +364,25 @@ def end_session_early(
     )
 
     avg_total = scores_obj.total
+    score_dict = scores_obj.to_dict()
 
-    _save_session_record(
+    session_record_id = _save_session_record(
         db=db,
         document_id=document_id,
         topic=topic,
         total_score=avg_total,
+        scores=score_dict,
         turn_count=len(session_history),
         termination_reason="user",
         coverage_percent=coverage.get("coverage_percent", 0.0),
         misconceptions=[],
         session_summary=summary,
+        user_kg_before=initial_user_kg,
+        user_kg_after=_build_user_kg_view(db, document_id, user_kg, include_sources=True),
     )
 
     return TurnResult(
-        scores=scores_obj.to_dict(),
+        scores=score_dict,
         total=avg_total,
         misconceptions=[],
         is_session_done=True,
@@ -345,4 +391,5 @@ def end_session_early(
         closing_message=closing,
         coverage=coverage,
         missing_nodes=get_missing_nodes(user_kg),
+        session_record_id=session_record_id,
     )

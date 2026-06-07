@@ -56,6 +56,26 @@
   background: #f0f4ff;
 }
 .file-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; flex-wrap: wrap; }
+.file-delete-btn {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.file-delete-btn:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+.file-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
 
 .file-coverage {}
 .coverage-label { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-bottom: 5px; }

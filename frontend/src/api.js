@@ -29,6 +29,7 @@ export const api = {
   getDocument:         (id) => req(`/documents/${id}`),
   getDocuments:        ()   => req('/documents'),
   getDocumentSessions: (id) => req(`/documents/${id}/sessions`),
+  deleteDocument:      (id) => req(`/documents/${id}`, { method: 'DELETE' }),
 
   // 지식 그래프
   getKG:     (id) => req(`/knowledge-graphs/${id}`),
@@ -50,6 +51,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  getSessionReport: (id) => req(`/sessions/${id}/report`),
 
   // 음성 인식
   transcribeAudio: (audioBlob, topic) => {

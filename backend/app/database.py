@@ -44,4 +44,7 @@ def init_db():
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_file_hash ON documents (file_hash)"))
+        conn.execute(text("ALTER TABLE session_records ADD COLUMN IF NOT EXISTS scores JSON"))
+        conn.execute(text("ALTER TABLE session_records ADD COLUMN IF NOT EXISTS user_kg_before JSON"))
+        conn.execute(text("ALTER TABLE session_records ADD COLUMN IF NOT EXISTS user_kg_after JSON"))
         conn.commit()

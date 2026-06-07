@@ -221,6 +221,11 @@ class SessionRecordResponse(BaseModel):
         from_attributes = True
 
 
+class DocumentDeleteResponse(BaseModel):
+    id: int
+    deleted: bool
+
+
 @router.get("/{document_id}/sessions", response_model=List[SessionRecordResponse])
 def list_document_sessions(
     document_id: int,
@@ -237,3 +242,26 @@ def list_document_sessions(
         .all()
     )
     return records
+
+
+@router.delete("/{document_id}", response_model=DocumentDeleteResponse)
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+):
+    """문서와 해당 문서의 KG, 청크, 세션 이력을 삭제한다."""
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if not document:
+        raise DocumentNotFoundError(document_id)
+
+    file_path = document.file_path
+    db.delete(document)
+    db.commit()
+
+    if file_path and os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+
+    return DocumentDeleteResponse(id=document_id, deleted=True)
