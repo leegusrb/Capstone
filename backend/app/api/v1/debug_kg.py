@@ -26,7 +26,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.database import get_db
+from app.core.exceptions import DocumentNotFoundError
+from app.models.document import Document
+from app.models.user import User
 from app.services.kg_service import (
     NodeStatus,
     EdgeStatus,
@@ -36,6 +40,16 @@ from app.services.kg_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/debug", tags=["debug"])
+
+
+def _ensure_owned_document(db: Session, document_id: int, user_id: int) -> None:
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == user_id)
+        .first()
+    )
+    if not document:
+        raise DocumentNotFoundError(document_id)
 
 # ── 상태별 이모지 매핑 ─────────────────────────────────────
 _NODE_EMOJI: dict[str, str] = {
@@ -229,6 +243,7 @@ def _progress_bar(ratio: float, width: int = 10) -> str:
 def get_kg_debug_json(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
     """
     디버그용 KG JSON 덤프.
@@ -240,6 +255,7 @@ def get_kg_debug_json(
           "user_kg": { ... }
         }
     """
+    _ensure_owned_document(db, document_id, current_user.id)
     result = load_kg_from_db(db, document_id)
     if result is None:
         raise HTTPException(
@@ -264,11 +280,13 @@ def get_kg_debug_json(
 def get_kg_debug_pretty(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> str:
     """
     디버그용 KG Pretty-print.
     브라우저나 curl에서 바로 읽기 좋은 텍스트 형태로 반환.
     """
+    _ensure_owned_document(db, document_id, current_user.id)
     result = load_kg_from_db(db, document_id)
     if result is None:
         raise HTTPException(

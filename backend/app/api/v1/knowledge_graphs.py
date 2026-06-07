@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db
 from app.models.chunk import Chunk
 from app.models.knowledge_graph import KnowledgeGraph
 from app.models.document import Document
+from app.models.user import User
 from app.core.exceptions import DocumentNotFoundError
 from app.services.kg_service import (
     deserialize_kg,
@@ -19,13 +20,17 @@ from fastapi import HTTPException
 router = APIRouter(prefix="/knowledge-graphs", tags=["knowledge-graphs"])
 
 
-def _get_kg_or_404(db: Session, document_id: int) -> KnowledgeGraph:
+def _get_kg_or_404(db: Session, document_id: int, user_id: int) -> KnowledgeGraph:
     """document_id로 KG 레코드를 조회하고 없으면 404를 반환하는 공통 헬퍼."""
-    # Document 존재 여부 먼저 확인
-    if not db.query(Document).filter(Document.id == document_id).first():
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == user_id)
+        .first()
+    )
+    if not document:
         raise DocumentNotFoundError(document_id)
 
-    kg_record = db.query(KnowledgeGraph).filter_by(document_id=document_id).first()
+    kg_record = db.query(KnowledgeGraph).filter_by(document_id=document.id).first()
     if not kg_record:
         raise HTTPException(
             status_code=404,
@@ -38,6 +43,7 @@ def _get_kg_or_404(db: Session, document_id: int) -> KnowledgeGraph:
 def get_knowledge_graph(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     document_id에 해당하는 Reference KG와 User KG를 JSON으로 반환한다.
@@ -67,7 +73,7 @@ def get_knowledge_graph(
       }
     }
     """
-    kg_record = _get_kg_or_404(db, document_id)
+    kg_record = _get_kg_or_404(db, document_id, current_user.id)
 
     reference_kg = deserialize_kg(kg_record.reference_kg or {"nodes": [], "edges": []})
     user_kg      = deserialize_kg(kg_record.user_kg      or {"nodes": [], "edges": []})
@@ -89,9 +95,10 @@ def get_knowledge_graph(
 def get_reference_kg(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Reference KG만 반환한다 (정답 기준 노출 방지를 위해 체크리스트 제거)."""
-    kg_record = _get_kg_or_404(db, document_id)
+    kg_record = _get_kg_or_404(db, document_id, current_user.id)
     return {
         "document_id":  document_id,
         "reference_kg": strip_checklist_for_reference_view(kg_record.reference_kg or {"nodes": [], "edges": []}),
@@ -102,6 +109,7 @@ def get_reference_kg(
 def get_user_kg(
     document_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     User KG와 학습 진행 현황을 반환한다.
@@ -110,7 +118,7 @@ def get_user_kg(
     각 노드는 항목별 met/unmet 결과와 PDF 근거(source_quote, page_number)를
     포함하므로, 사용자가 자신이 빠뜨린 부분과 자료 근거를 직접 확인할 수 있다.
     """
-    kg_record = _get_kg_or_404(db, document_id)
+    kg_record = _get_kg_or_404(db, document_id, current_user.id)
 
     reference_kg = deserialize_kg(kg_record.reference_kg or {"nodes": [], "edges": []})
     user_kg      = deserialize_kg(kg_record.user_kg      or {"nodes": [], "edges": []})

@@ -11,6 +11,9 @@ from app.api.v1 import study_chat
 from app.services import study_tutor
 
 
+CURRENT_USER = SimpleNamespace(id=1, username="alice")
+
+
 class FakeDB:
     def __init__(self, document=None):
         self.document = document
@@ -135,7 +138,7 @@ def test_ask_study_tutor_returns_answer_for_ready_document(monkeypatch):
 
     monkeypatch.setattr(study_chat, "answer_study_question", fake_answer_study_question)
 
-    response = study_chat.ask_study_tutor(_body(), db=FakeDB(document))
+    response = study_chat.ask_study_tutor(_body(), db=FakeDB(document), current_user=CURRENT_USER)
 
     assert response.answer == "문서 기반 답변"
     assert [source.model_dump() for source in response.sources] == [
@@ -145,7 +148,7 @@ def test_ask_study_tutor_returns_answer_for_ready_document(monkeypatch):
 
 def test_ask_study_tutor_raises_404_for_missing_document():
     with pytest.raises(HTTPException) as exc:
-        study_chat.ask_study_tutor(_body(), db=FakeDB(None))
+        study_chat.ask_study_tutor(_body(), db=FakeDB(None), current_user=CURRENT_USER)
 
     assert exc.value.status_code == 404
 
@@ -154,7 +157,7 @@ def test_ask_study_tutor_raises_400_for_unfinished_document():
     document = SimpleNamespace(id=1, filename="lecture.pdf", status="processing")
 
     with pytest.raises(HTTPException) as exc:
-        study_chat.ask_study_tutor(_body(), db=FakeDB(document))
+        study_chat.ask_study_tutor(_body(), db=FakeDB(document), current_user=CURRENT_USER)
 
     assert exc.value.status_code == 400
     assert "아직 완료되지 않았습니다" in exc.value.detail

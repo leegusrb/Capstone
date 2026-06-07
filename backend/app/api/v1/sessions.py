@@ -19,10 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db
 from app.core.exceptions import DocumentNotFoundError
 from app.models.document import Document
 from app.models.session_record import SessionRecord
+from app.models.user import User
 from app.services.session_service import (
     TurnResult,
     end_session_early,
@@ -134,12 +135,16 @@ class SessionReportResponse(BaseModel):
 
 # ── 헬퍼 ──────────────────────────────────────────────────
 
-def _get_ready_document(db: Session, document_id: int) -> Document:
+def _get_ready_document(db: Session, document_id: int, user_id: int) -> Document:
     """
     Document가 존재하고 처리 완료 상태인지 확인한다.
     없거나 처리 중이면 적절한 HTTP 에러를 반환한다.
     """
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == user_id)
+        .first()
+    )
     if not doc:
         raise DocumentNotFoundError(document_id)
     if doc.status != "done":
@@ -159,6 +164,7 @@ def _get_ready_document(db: Session, document_id: int) -> Document:
 def api_start_session(
     body: StartSessionRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     세션을 시작하고 Student LLM의 첫 질문을 반환한다.
@@ -167,7 +173,7 @@ def api_start_session(
     - 현재 User KG의 confirmed/partial 상태를 반영한 첫 질문을 생성합니다.
       (이미 학습한 세션이 있다면 이어서 질문합니다.)
     """
-    _get_ready_document(db, body.document_id)
+    _get_ready_document(db, body.document_id, current_user.id)
 
     result = start_session(
         topic=body.topic,
@@ -184,6 +190,7 @@ def api_start_session(
 def api_process_turn(
     body: TurnRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     사용자 설명 1턴을 처리한다.
@@ -202,7 +209,7 @@ def api_process_turn(
       - session_history: 매 턴 응답의 scores를 누적해서 다음 요청에 포함
       - turn_count: 1부터 시작해서 매 턴 +1
     """
-    _get_ready_document(db, body.document_id)
+    _get_ready_document(db, body.document_id, current_user.id)
 
     result: TurnResult = process_turn(
         topic=body.topic,
@@ -234,6 +241,7 @@ def api_process_turn(
 def api_end_session(
     body: EndSessionRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     사용자가 직접 세션을 종료할 때 호출한다.
@@ -242,7 +250,7 @@ def api_end_session(
     - DB의 실제 User KG 커버리지를 기반으로 마무리 메시지를 생성합니다.
     - User KG는 변경하지 않습니다 (다음 세션에서 이어서 사용).
     """
-    _get_ready_document(db, body.document_id)
+    _get_ready_document(db, body.document_id, current_user.id)
 
     result: TurnResult = end_session_early(
         topic=body.topic,
@@ -267,9 +275,15 @@ def api_end_session(
 def api_get_session_report(
     session_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """저장된 세션 리포트 데이터를 반환한다."""
-    record = db.query(SessionRecord).filter(SessionRecord.id == session_id).first()
+    record = (
+        db.query(SessionRecord)
+        .join(Document, Document.id == SessionRecord.document_id)
+        .filter(SessionRecord.id == session_id, Document.user_id == current_user.id)
+        .first()
+    )
     if not record:
         raise HTTPException(
             status_code=404,

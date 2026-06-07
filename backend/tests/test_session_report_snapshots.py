@@ -12,6 +12,9 @@ from app.api.v1 import sessions
 from app.services.session_service import _save_session_record
 
 
+CURRENT_USER = SimpleNamespace(id=1, username="alice")
+
+
 class FakeDB:
     def __init__(self, record=None):
         self.record = record
@@ -36,6 +39,9 @@ class FakeQuery:
         self.record = record
 
     def filter(self, *_args, **_kwargs):
+        return self
+
+    def join(self, *_args, **_kwargs):
         return self
 
     def first(self):
@@ -90,7 +96,7 @@ def test_get_session_report_returns_saved_kg_snapshots():
         created_at=created_at,
     )
 
-    response = sessions.api_get_session_report(7, db=FakeDB(record))
+    response = sessions.api_get_session_report(7, db=FakeDB(record), current_user=CURRENT_USER)
 
     assert response.document_id == 3
     assert response.scores == {"concept": 3}
@@ -117,7 +123,7 @@ def test_get_session_report_handles_legacy_record_without_snapshots():
         created_at=None,
     )
 
-    response = sessions.api_get_session_report(8, db=FakeDB(record))
+    response = sessions.api_get_session_report(8, db=FakeDB(record), current_user=CURRENT_USER)
 
     assert response.scores == {}
     assert response.coverage == {"coverage_percent": 25.0}
@@ -128,6 +134,6 @@ def test_get_session_report_handles_legacy_record_without_snapshots():
 
 def test_get_session_report_404_for_missing_record():
     with pytest.raises(HTTPException) as exc:
-        sessions.api_get_session_report(999, db=FakeDB(None))
+        sessions.api_get_session_report(999, db=FakeDB(None), current_user=CURRENT_USER)
 
     assert exc.value.status_code == 404

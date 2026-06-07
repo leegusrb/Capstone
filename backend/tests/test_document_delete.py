@@ -1,6 +1,6 @@
 import os
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -11,6 +11,9 @@ sys.modules.setdefault("fitz", ModuleType("fitz"))
 from app.api.v1.documents import delete_document
 from app.core.exceptions import DocumentNotFoundError
 from app.models.document import Document
+
+
+CURRENT_USER = SimpleNamespace(id=1, username="alice")
 
 
 class FakeDB:
@@ -46,7 +49,7 @@ def test_delete_document_removes_record_and_uploaded_file(tmp_path):
     document = Document(id=7, filename="lecture.pdf", file_path=str(file_path), status="done")
     db = FakeDB(document)
 
-    response = delete_document(7, db=db)
+    response = delete_document(7, db=db, current_user=CURRENT_USER)
 
     assert response.id == 7
     assert response.deleted is True
@@ -57,4 +60,4 @@ def test_delete_document_removes_record_and_uploaded_file(tmp_path):
 
 def test_delete_document_returns_404_when_missing():
     with pytest.raises(DocumentNotFoundError):
-        delete_document(404, db=FakeDB(None))
+        delete_document(404, db=FakeDB(None), current_user=CURRENT_USER)

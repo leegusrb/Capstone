@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user, get_db
 from app.core.exceptions import DocumentNotFoundError
 from app.models.document import Document
+from app.models.user import User
 from app.services.study_tutor import answer_study_question
 
 router = APIRouter(prefix="/study-chat", tags=["study-chat"])
@@ -40,8 +41,12 @@ class StudyChatAskResponse(BaseModel):
     sources: list[StudyChatSource]
 
 
-def _get_ready_document(db: Session, document_id: int) -> Document:
-    document = db.query(Document).filter(Document.id == document_id).first()
+def _get_ready_document(db: Session, document_id: int, user_id: int) -> Document:
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == user_id)
+        .first()
+    )
     if not document:
         raise DocumentNotFoundError(document_id)
     if document.status != "done":
@@ -59,9 +64,10 @@ def _get_ready_document(db: Session, document_id: int) -> Document:
 def ask_study_tutor(
     body: StudyChatAskRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """업로드된 문서 기반으로 학생모드 AI 튜터 답변을 생성한다."""
-    _get_ready_document(db, body.document_id)
+    _get_ready_document(db, body.document_id, current_user.id)
 
     result = answer_study_question(
         db=db,

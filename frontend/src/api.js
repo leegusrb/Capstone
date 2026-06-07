@@ -1,9 +1,25 @@
 const BASE = 'http://localhost:8000/api/v1';
 
+function getCurrentUserId() {
+  try {
+    return JSON.parse(localStorage.getItem('kg_user'))?.id || '';
+  } catch {
+    return '';
+  }
+}
+
+function withAuthHeaders(headers = {}) {
+  const userId = getCurrentUserId();
+  return userId ? { ...headers, 'X-User-Id': userId } : headers;
+}
+
 async function req(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: withAuthHeaders({
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -17,7 +33,11 @@ export const api = {
   uploadDocument: (file) => {
     const form = new FormData();
     form.append('file', file);
-    return fetch(`${BASE}/documents/upload`, { method: 'POST', body: form })
+    return fetch(`${BASE}/documents/upload`, {
+      method: 'POST',
+      headers: withAuthHeaders(),
+      body: form,
+    })
       .then(async res => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -67,7 +87,11 @@ export const api = {
     form.append('file', audioBlob, `teacher-mode.${ext}`);
     form.append('topic', topic || '');
 
-    return fetch(`${BASE}/speech/transcribe`, { method: 'POST', body: form })
+    return fetch(`${BASE}/speech/transcribe`, {
+      method: 'POST',
+      headers: withAuthHeaders(),
+      body: form,
+    })
       .then(async res => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));

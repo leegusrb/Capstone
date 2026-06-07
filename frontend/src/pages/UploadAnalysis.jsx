@@ -9,6 +9,12 @@ const STEPS = [
   { id: 2, label: '벡터 DB 저장 중...', detail: '임베딩 생성 & 인덱싱' },
   { id: 3, label: '핵심 개념(Reference KG) 생성 중...', detail: 'GPT-4o로 지식 그래프 추출' },
 ];
+const POLL_INTERVAL_MS = 2000;
+const MAX_POLL_COUNT = 180;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export default function UploadAnalysis() {
   const navigate = useNavigate();
@@ -35,6 +41,7 @@ export default function UploadAnalysis() {
 
     try {
       const uploaded = await api.uploadDocument(file);
+      const processed = await waitForDocumentDone(uploaded.id);
       clearTimeout(t1);
       clearTimeout(t2);
       setStep(3);
@@ -43,7 +50,11 @@ export default function UploadAnalysis() {
       const refNodes = kgData.reference_kg?.nodes || [];
       const refEdges = kgData.reference_kg?.edges || [];
 
-      setDocInfo({ id: uploaded.id, filename: uploaded.filename, chunk_count: uploaded.chunk_count });
+      setDocInfo({
+        id: uploaded.id,
+        filename: uploaded.filename,
+        chunk_count: processed.chunk_count ?? uploaded.chunk_count,
+      });
       setKgEdges(convertEdges(refEdges));
       const laid = layoutKGNodes(refNodes, refEdges, 560, 420);
       setKgNodes(laid.nodes);
@@ -55,6 +66,18 @@ export default function UploadAnalysis() {
       setError(e.message || '업로드 중 오류가 발생했습니다.');
       setPhase('idle');
     }
+  }
+
+  async function waitForDocumentDone(documentId) {
+    for (let i = 0; i < MAX_POLL_COUNT; i++) {
+      const doc = await api.getDocument(documentId);
+      if (doc.status === 'done') return doc;
+      if (doc.status === 'failed') {
+        throw new Error('PDF 분석에 실패했습니다. 파일 내용을 확인한 뒤 다시 시도해주세요.');
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+    throw new Error('PDF 분석 시간이 너무 오래 걸립니다. 잠시 후 저장소에서 상태를 확인해주세요.');
   }
 
   function handleFile(file) {

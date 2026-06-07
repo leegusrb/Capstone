@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -15,6 +15,13 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     filename  = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
@@ -44,3 +51,5 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+
+    user = relationship("User", back_populates="documents")
