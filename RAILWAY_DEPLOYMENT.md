@@ -29,6 +29,9 @@ CORS_ORIGINS=https://<frontend-domain>
 DEBUG_MODE=false
 ```
 
+The app accepts Railway database URLs that start with either `postgres://` or
+`postgresql://`.
+
 Mount the Railway Volume at `/app/uploads` so uploaded PDFs survive redeploys.
 
 ## Frontend

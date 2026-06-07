@@ -5,7 +5,7 @@ from app.config import settings
 
 # SQLAlchemy 엔진 생성
 engine = create_engine(
-    settings.database_url,
+    settings.sqlalchemy_database_url,
     pool_pre_ping=True,   # 연결이 끊겼을 때 자동 재연결
     echo=False,           # SQL 로그 출력 여부 (개발 중 True로 바꾸면 편함)
 )
