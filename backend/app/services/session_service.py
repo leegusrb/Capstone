@@ -32,12 +32,15 @@ from app.services.kg_service import (
 )
 from app.services.evaluator_llm import (
     EvaluatorResult,
+    build_session_summary,
+    evaluate_explanation,
+)
+from app.services.rubric_service import (
     RubricScores,
     SCORE_THRESHOLD,
     SCORE_CATEGORIES,
-    build_session_summary,
     compute_rubric_scores,
-    evaluate_explanation,
+    evaluate_confidence_levels,
 )
 from app.services.student_llm import (
     StudentResponse,
@@ -160,24 +163,34 @@ def process_turn(
     # ── 2. RAG 검색 (실제 문서 청크) ──
     rag_chunks = _retrieve_rag_chunks(db, document_id, query=user_explanation)
 
-    # ── 3. Evaluator LLM — 실제 KG 기반 채점 ──
+    # ── 3. Call 1 — KG 평가 (노드/엣지 status, 체크리스트, 오개념) ──
     eval_result: EvaluatorResult = evaluate_explanation(
         user_explanation=user_explanation,
         user_kg=user_kg,
         reference_kg=reference_kg,
         rag_chunks=rag_chunks,
-        session_history=session_history,
         turn_count=turn_count,
         model=model,
     )
 
-    # ── 4. User KG 업데이트 ──
+    # ── 4. Call 2 — 루브릭 평가 (confidence_level) ──
+    mentioned_node_ids = [n["id"] for n in eval_result.updated_user_kg.get("nodes", [])]
+    confidence_levels = evaluate_confidence_levels(
+        user_explanation=user_explanation,
+        mentioned_node_ids=mentioned_node_ids,
+        rag_chunks=rag_chunks,
+        model=model,
+    )
+    for node in eval_result.updated_user_kg.get("nodes", []):
+        node["confidence_level"] = confidence_levels.get(node["id"], "low")
+
+    # ── 5. User KG 업데이트 ──
     user_kg = update_user_kg_from_evaluator(user_kg, {
         "updated_user_kg": eval_result.updated_user_kg,
         "misconceptions":  eval_result.misconceptions,
     })
 
-    # ── 5. 업데이트된 KG 기반 루브릭 점수 계산 ──
+    # ── 6. 업데이트된 KG 기반 루브릭 점수 계산 ──
     scores = compute_rubric_scores(user_kg, reference_kg)
 
     # 누적 보장: concept/accuracy/logic은 이전 최고 점수를 floor로 적용

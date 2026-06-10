@@ -1,0 +1,3 @@
+[submodule "slides-grab"]
+	path = slides-grab
+	url = https://github.com/NomaDamas/slides-grab.git
