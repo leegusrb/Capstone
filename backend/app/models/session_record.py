@@ -23,6 +23,9 @@ class SessionRecord(Base):
     termination_reason = Column(String(50), nullable=True)     # score / repetition / turn_limit / user
     coverage_percent = Column(Float, nullable=True)
     misconceptions = Column(JSON, nullable=True)               # list[str]
+    scores = Column(JSON, nullable=True)                       # 최종 루브릭 점수 dict
+    user_kg_before = Column(JSON, nullable=True)               # 세션 시작 직전 User KG view
+    user_kg_after = Column(JSON, nullable=True)                # 세션 종료 시점 User KG view
     session_summary = Column(JSON, nullable=True)              # 전체 요약 dict
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -1582,7 +1582,12 @@ def _cluster_top_nodes(
     # ── 그래프 수정 적용 (루트 연결 제외) ─────────────────────
     for group_name, members in group_to_members.items():
         if group_name not in graph:
-            graph.add_node(group_name, status="reference", checklist=[])
+            graph.add_node(
+                group_name,
+                status="reference",
+                checklist=[],
+                evaluation_exempt=True,
+            )
             logger.info("새 중간 노드 추가: '%s'", group_name)
         # 기존 최상위 노드가 헤더로 승격된 경우 → 이미 그래프에 존재
 
@@ -1621,10 +1626,17 @@ def _extract_root_concept(text: str) -> str:
 def _attach_root_node(graph: nx.DiGraph, root_concept: str) -> nx.DiGraph:
     """모든 노드가 루트에서 도달 가능하도록 루트 노드를 연결한다."""
     if root_concept not in graph:
-        graph.add_node(root_concept, status="reference", checklist=[])
+        graph.add_node(
+            root_concept,
+            status="reference",
+            checklist=[],
+            evaluation_exempt=True,
+        )
     else:
         graph.nodes[root_concept].setdefault("status", "reference")
         graph.nodes[root_concept].setdefault("checklist", [])
+        if not graph.nodes[root_concept].get("checklist"):
+            graph.nodes[root_concept].setdefault("evaluation_exempt", True)
 
     top_level = [
         n for n in graph.nodes()

@@ -18,6 +18,32 @@ const STATUS_LABEL = {
   misconception:'Misconception',
 };
 
+function initialReportData(state) {
+  return {
+    document_id:    state?.document_id,
+    topic:          state?.topic || '학습 세션',
+    scores:         state?.scores || {},
+    total:          state?.total || 0,
+    coverage:       state?.coverage || {},
+    missing_nodes:  state?.missing_nodes || [],
+    misconceptions: state?.misconceptions || [],
+    turn_count:     state?.turn_count || 0,
+  };
+}
+
+function normalizeReportData(data, fallback) {
+  return {
+    document_id:    data?.document_id ?? fallback.document_id,
+    topic:          data?.topic || fallback.topic || '학습 세션',
+    scores:         data?.scores || fallback.scores || {},
+    total:          data?.total ?? fallback.total ?? 0,
+    coverage:       data?.coverage || fallback.coverage || {},
+    missing_nodes:  data?.missing_nodes || fallback.missing_nodes || [],
+    misconceptions: data?.misconceptions || fallback.misconceptions || [],
+    turn_count:     data?.turn_count ?? fallback.turn_count ?? 0,
+  };
+}
+
 function RadarChart({ scores }) {
   const entries = Object.entries(scores).filter(([k]) => SCORE_LABELS[k]);
   if (entries.length === 0) return null;
@@ -65,41 +91,111 @@ function RadarChart({ scores }) {
 
 export default function SessionReport() {
   const navigate = useNavigate();
-  const { state } = useLocation();
+  const { state, search } = useLocation();
+  const sessionId = new URLSearchParams(search).get('session_id') || state?.session_record_id;
+  const [reportData, setReportData] = useState(() => initialReportData(state));
 
-  const document_id   = state?.document_id;
-  const topic         = state?.topic || '학습 세션';
-  const scores        = state?.scores || {};
-  const total         = state?.total || 0;
-  const coverage      = state?.coverage || {};
-  const missingNodes  = state?.missing_nodes || [];
-  const misconceptions= state?.misconceptions || [];
-  const turnCount     = state?.turn_count || 0;
+  const document_id   = reportData.document_id;
+  const topic         = reportData.topic;
+  const scores        = reportData.scores;
+  const total         = reportData.total;
+  const coverage      = reportData.coverage;
+  const missingNodes  = reportData.missing_nodes;
+  const misconceptions= reportData.misconceptions;
+  const turnCount     = reportData.turn_count;
 
   const totalPct = Math.round((total / 12) * 100);
   const passed = totalPct >= 70;
 
+  const [beforeNodes, setBeforeNodes] = useState([]);
+  const [beforeEdges, setBeforeEdges] = useState([]);
   const [afterNodes, setAfterNodes] = useState([]);
   const [afterEdges, setAfterEdges] = useState([]);
   const [kgDims, setKgDims]         = useState({ width: 420, height: 310 });
   const [selectedNode, setSelectedNode] = useState(null);
   const [expandedEvidenceKey, setExpandedEvidenceKey] = useState(null);
-  const [kgLoading, setKgLoading]   = useState(Boolean(document_id));
+  const [kgLoading, setKgLoading]   = useState(Boolean(sessionId || document_id));
   const checklistRef = useRef(null);
 
   useEffect(() => {
-    if (!document_id) return;
-    api.getUserKG(document_id).then(data => {
-      const nodes = data.user_kg?.nodes || [];
-      const edges = data.user_kg?.edges || [];
-      setAfterEdges(convertEdges(edges));
-      const laid = layoutKGNodes(nodes, edges, 420, 310);
-      setAfterNodes(laid.nodes);
-      setKgDims({ width: laid.width, height: laid.height });
-    }).catch(() => {}).finally(() => setKgLoading(false));
-  }, [document_id]);
+    let cancelled = false;
+    const fallback = initialReportData(state);
 
-  const beforeNodes = afterNodes.map(n => ({ ...n, status: 'missing' }));
+    function applyGraphPair(beforeKg, afterKg) {
+      const afterRawNodes = afterKg?.nodes || [];
+      const afterRawEdges = afterKg?.edges || [];
+      if (!afterRawNodes.length) {
+        setBeforeNodes([]);
+        setBeforeEdges([]);
+        setAfterNodes([]);
+        setAfterEdges([]);
+        return;
+      }
+
+      const laid = layoutKGNodes(afterRawNodes, afterRawEdges, 420, 310);
+      if (!laid?.nodes) return;
+
+      const byId = Object.fromEntries(laid.nodes.map(node => [node.id, node]));
+      const beforeRawNodes = beforeKg?.nodes?.length
+        ? beforeKg.nodes
+        : afterRawNodes.map(node => ({ ...node, status: 'missing', checklist: [] }));
+      const beforeRawEdges = beforeKg?.edges?.length ? beforeKg.edges : afterRawEdges;
+
+      const alignToAfterLayout = (node) => {
+        const positioned = byId[node.id] || {};
+        return {
+          id: node.id,
+          label: node.id,
+          x: positioned.x ?? Math.round(laid.width / 2),
+          y: positioned.y ?? Math.round(laid.height / 2),
+          status: node.status || 'missing',
+          checklist: node.checklist || [],
+        };
+      };
+
+      setBeforeNodes(beforeRawNodes.map(alignToAfterLayout));
+      setBeforeEdges(convertEdges(beforeRawEdges));
+      setAfterNodes(laid.nodes);
+      setAfterEdges(convertEdges(afterRawEdges));
+      setKgDims({ width: laid.width, height: laid.height });
+    }
+
+    async function loadCurrentUserKG(documentId) {
+      const data = await api.getUserKG(documentId);
+      if (!cancelled) applyGraphPair(null, data.user_kg);
+    }
+
+    async function loadReport() {
+      if (!sessionId && !fallback.document_id) return;
+      setKgLoading(true);
+      setSelectedNode(null);
+      setExpandedEvidenceKey(null);
+
+      try {
+        if (sessionId) {
+          const data = await api.getSessionReport(sessionId);
+          if (cancelled) return;
+
+          setReportData(normalizeReportData(data, fallback));
+          if (data.user_kg_after?.nodes?.length) {
+            applyGraphPair(data.user_kg_before, data.user_kg_after);
+          } else if (data.document_id) {
+            await loadCurrentUserKG(data.document_id);
+          }
+        } else {
+          setReportData(fallback);
+          await loadCurrentUserKG(fallback.document_id);
+        }
+      } catch {
+        if (fallback.document_id) await loadCurrentUserKG(fallback.document_id);
+      } finally {
+        if (!cancelled) setKgLoading(false);
+      }
+    }
+
+    loadReport();
+    return () => { cancelled = true; };
+  }, [sessionId, state]);
 
   const rubricScores = Object.entries(scores)
     .filter(([k]) => SCORE_LABELS[k])
@@ -179,14 +275,14 @@ export default function SessionReport() {
         ) : (
           <div className="kg-compare-row">
             <div className="card kg-cmp">
-              <div className="cmp-badge before">BEFORE</div>
+              <div className="cmp-badge before">이전 세션 KG</div>
               <div className="kg-bg">
-                <KnowledgeGraph nodes={beforeNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height} />
+                <KnowledgeGraph nodes={beforeNodes} edges={beforeEdges} width={kgDims.width} height={kgDims.height} />
               </div>
             </div>
             <div className="cmp-arrow">→</div>
             <div className="card kg-cmp">
-              <div className="cmp-badge after">AFTER</div>
+              <div className="cmp-badge after">현재 세션 종료 KG</div>
               <div className="kg-bg">
                 <KnowledgeGraph
                   nodes={afterNodes} edges={afterEdges} width={kgDims.width} height={kgDims.height}
@@ -264,7 +360,7 @@ export default function SessionReport() {
             <div className="ncp-empty-state">
               <span className="ncp-empty-arrow">↑</span>
               <p className="ncp-empty-text">
-                AFTER 그래프의 노드를 클릭하면<br />해당 개념의 체크리스트를 확인할 수 있습니다
+                현재 세션 종료 KG의 노드를 클릭하면<br />해당 개념의 체크리스트를 확인할 수 있습니다
               </p>
             </div>
           )}
@@ -311,6 +407,10 @@ export default function SessionReport() {
         <button className="btn btn-secondary btn-lg"
           onClick={() => navigate('/teacher', { state: { document_id, topic } })}>
           ↩ 다시 선생님 모드
+        </button>
+        <button className="btn btn-primary btn-lg"
+          onClick={() => navigate('/student', { state: { document_id, topic } })}>
+          학생 모드로 질문하기
         </button>
         <button className="btn btn-ghost btn-lg" onClick={() => navigate('/archive')}>
           저장소로 이동

@@ -228,4 +228,7 @@
 }
 
 /* Footer */
-.report-footer { display: flex; gap: 12px; justify-content: flex-end; padding-bottom: 16px; }
+.report-footer {
+  display: flex; flex-wrap: wrap;
+  gap: 12px; justify-content: flex-end; padding-bottom: 16px;
+}

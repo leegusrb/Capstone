@@ -1,27 +1,29 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { api } from '../api';
 import './ChatMode.css';
-
-const INIT_MSG = {
-  role: 'ai', time: '10:00',
-  text: '안녕하세요! 저는 AI 튜터예요. TCP/IP 네트워크에 대해 궁금한 점을 편하게 물어보세요! 🎓',
-};
-
-const AI_RESPONSES = [
-  'TCP와 UDP의 가장 큰 차이는 무엇인가요? 신뢰성 측면에서 설명해주세요.',
-  '3-way Handshake에서 SYN, SYN-ACK, ACK 각각의 역할을 알 수 있을까요?',
-  '흐름 제어(Flow Control)와 혼잡 제어(Congestion Control)의 차이를 예시와 함께 알려주실 수 있나요?',
-  '슬라이딩 윈도우(Sliding Window) 방식이 어떻게 동작하는지 설명해주세요.',
-  '좋은 설명 감사해요! ACK 번호가 "다음에 받을 바이트 번호"인 이유가 뭔가요?',
-];
 
 export default function StudentMode() {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState([INIT_MSG]);
+  const { state } = useLocation();
+  const document_id = state?.document_id;
+  const topic = state?.topic || '학습 주제';
+  const filename = state?.filename;
+
+  const [messages, setMessages] = useState(() => (
+    document_id
+      ? [{
+          role: 'ai',
+          time: now(),
+          text: `안녕하세요! 저는 AI 튜터예요. ${topic}에 대해 궁금한 점을 편하게 물어보세요.`,
+        }]
+      : []
+  ));
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
-  const [aiIdx, setAiIdx] = useState(0);
+  const [error, setError] = useState('');
   const chatRef = useRef();
+  const conversationHistory = useRef([]);
   const recognitionRef = useRef(null);
   const [isRecording, setIsRecording] = useState(false);
 
@@ -55,20 +57,61 @@ export default function StudentMode() {
     recognition.start();
   }
 
-  function send() {
-    if (!input.trim()) return;
-    const t = new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit' });
-    setMessages(m => [...m, { role:'user', text: input, time: t }]);
+  async function send() {
+    if (!input.trim() || typing || !document_id) return;
+
+    const t = now();
+    const userText = input.trim();
+    const previousHistory = conversationHistory.current;
+
+    setMessages(m => [...m, { role: 'user', text: userText, time: t }]);
     setInput('');
     setTyping(true);
-    setTimeout(() => {
+    setError('');
+
+    try {
+      const res = await api.askStudyTutor({
+        document_id,
+        topic,
+        question: userText,
+        conversation_history: previousHistory,
+      });
+
+      const aiMsg = {
+        role: 'ai',
+        time: now(),
+        text: res.answer,
+        sources: res.sources || [],
+      };
+
       setTyping(false);
+      setMessages(m => [...m, aiMsg]);
+      conversationHistory.current = [
+        ...previousHistory,
+        { role: 'user', content: userText },
+        { role: 'assistant', content: res.answer },
+      ];
+    } catch (e) {
+      setTyping(false);
+      const message = e.message || '답변 생성에 실패했습니다.';
+      setError(message);
       setMessages(m => [...m, {
-        role: 'ai', time: t,
-        text: AI_RESPONSES[aiIdx % AI_RESPONSES.length],
+        role: 'ai',
+        time: now(),
+        text: `오류가 발생했습니다: ${message}`,
       }]);
-      setAiIdx(i => i + 1);
-    }, 1200 + Math.random() * 600);
+    }
+  }
+
+  if (!document_id) {
+    return (
+      <div className="chat-page fade-in" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+          <p style={{ color: '#ef4444', marginBottom: 16 }}>학습 자료를 먼저 업로드해주세요.</p>
+          <button className="btn btn-primary" onClick={() => navigate('/upload')}>파일 업로드하러 가기</button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -78,13 +121,15 @@ export default function StudentMode() {
           <div className="mode-icon student">🎓</div>
           <div>
             <div className="mode-title">학생 모드 (Learner)</div>
-            <div className="mode-subtitle">AI 튜터에게 질문하며 학습하세요</div>
+            <div className="mode-subtitle">
+              {filename ? `${filename} · ` : ''}{topic} · AI 튜터에게 질문하며 학습하세요
+            </div>
           </div>
           <span className="tag tag-green">학습 중</span>
         </div>
         <button
           className="btn btn-primary"
-          onClick={() => navigate('/teacher')}
+          onClick={() => navigate('/teacher', { state: { document_id, topic, filename } })}
         >
           🧑‍🏫 선생님 모드로 전환 · Start Explaining
         </button>
@@ -97,9 +142,18 @@ export default function StudentMode() {
               {m.role === 'ai' && <div className="bubble-ava ai">🎓</div>}
               <div className={`bubble ${m.role}`}>
                 <p>{m.text}</p>
+                {m.role === 'ai' && m.sources?.length > 0 && (
+                  <div className="source-list">
+                    {m.sources.map((source, idx) => (
+                      <span key={idx} className="source-chip">
+                        {formatSource(source)}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <span className="btime">{m.time}</span>
               </div>
-              {m.role === 'user' && <div className="bubble-ava user">K</div>}
+              {m.role === 'user' && <div className="bubble-ava user">나</div>}
             </div>
           ))}
           {typing && (
@@ -115,24 +169,37 @@ export default function StudentMode() {
         <div className="chat-input-bar">
           <textarea
             className="chat-textarea"
-            placeholder="질문을 입력하거나 답변을 작성하세요... (Enter: 전송)"
+            placeholder="궁금한 점을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)"
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); } }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             rows={2}
+            disabled={typing}
           />
           <button
             className={`mic-btn${isRecording ? ' recording' : ''}`}
             onClick={toggleVoice}
+            disabled={typing}
             title={isRecording ? '음성 입력 중단' : '음성으로 입력'}
           >
             {isRecording ? '⏹' : '🎙️'}
           </button>
-          <button className="btn btn-primary send-btn" onClick={send} disabled={!input.trim()}>
+          <button className="btn btn-primary send-btn" onClick={send} disabled={!input.trim() || typing}>
             전송
           </button>
         </div>
+        {error && <div className="chat-error">{error}</div>}
       </div>
     </div>
   );
+}
+
+function now() {
+  return new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatSource(source) {
+  if (source.page_number != null) return `${source.page_number}페이지`;
+  if (source.chunk_index != null) return `청크 ${source.chunk_index}`;
+  return '자료';
 }

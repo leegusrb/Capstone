@@ -15,3 +15,5 @@ class User(Base):
     name          = Column(String(100), nullable=False)
     email         = Column(String(255), nullable=False, unique=True, index=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
+
+    documents = relationship("Document", back_populates="user")

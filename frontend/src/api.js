@@ -1,9 +1,25 @@
-const BASE = 'http://localhost:8000/api/v1';
+import { API_BASE_URL } from './config';
+
+function getCurrentUserId() {
+  try {
+    return JSON.parse(localStorage.getItem('kg_user'))?.id || '';
+  } catch {
+    return '';
+  }
+}
+
+function withAuthHeaders(headers = {}) {
+  const userId = getCurrentUserId();
+  return userId ? { ...headers, 'X-User-Id': userId } : headers;
+}
 
 async function req(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+  const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    headers: withAuthHeaders({
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -17,7 +33,11 @@ export const api = {
   uploadDocument: (file) => {
     const form = new FormData();
     form.append('file', file);
-    return fetch(`${BASE}/documents/upload`, { method: 'POST', body: form })
+    return fetch(`${API_BASE_URL}/documents/upload`, {
+      method: 'POST',
+      headers: withAuthHeaders(),
+      body: form,
+    })
       .then(async res => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -29,6 +49,7 @@ export const api = {
   getDocument:         (id) => req(`/documents/${id}`),
   getDocuments:        ()   => req('/documents'),
   getDocumentSessions: (id) => req(`/documents/${id}/sessions`),
+  deleteDocument:      (id) => req(`/documents/${id}`, { method: 'DELETE' }),
 
   // 지식 그래프
   getKG:     (id) => req(`/knowledge-graphs/${id}`),
@@ -50,6 +71,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  getSessionReport: (id) => req(`/sessions/${id}/report`),
+
+  // 학생모드 Q&A
+  askStudyTutor: (body) =>
+    req('/study-chat/ask', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   // 음성 인식
   transcribeAudio: (audioBlob, topic) => {
@@ -58,7 +87,11 @@ export const api = {
     form.append('file', audioBlob, `teacher-mode.${ext}`);
     form.append('topic', topic || '');
 
-    return fetch(`${BASE}/speech/transcribe`, { method: 'POST', body: form })
+    return fetch(`${API_BASE_URL}/speech/transcribe`, {
+      method: 'POST',
+      headers: withAuthHeaders(),
+      body: form,
+    })
       .then(async res => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));

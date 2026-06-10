@@ -23,6 +23,7 @@ from app.services.kg_service import (
     _RELATION_TYPE_GUIDE,
     get_missing_nodes,
     get_nodes_by_status,
+    is_evaluation_node,
 )
 from app.services.rubric_service import SCORE_CATEGORIES
 
@@ -231,7 +232,7 @@ def _format_reference_kg_with_checklist(reference_kg: nx.DiGraph) -> str:
 
     blocks = []
     for node_id, attrs in reference_kg.nodes(data=True):
-        if node_id == "__misconceptions__":
+        if not is_evaluation_node(node_id, attrs):
             continue
         checklist = attrs.get("checklist", [])
         lines = [f"[노드: {node_id}]"]
@@ -253,6 +254,10 @@ def _format_reference_edges(reference_kg: nx.DiGraph) -> str:
     edges = [
         f"{src} -[{attrs.get('relation', '?')}]-> {tgt}"
         for src, tgt, attrs in reference_kg.edges(data=True)
+        if (
+            is_evaluation_node(src, reference_kg.nodes[src])
+            and is_evaluation_node(tgt, reference_kg.nodes[tgt])
+        )
     ]
     return "\n".join(edges) if edges else "(엣지 없음)"
 
