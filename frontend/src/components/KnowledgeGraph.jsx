@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import './KnowledgeGraph.css';
 
 function splitLabel(label) {
   const text = String(label || '');
@@ -38,8 +39,39 @@ const LBL_X   = 86;  // 좌우 (레이블 최대 폭의 절반)
 const LBL_TOP = 34;  // 위
 const LBL_BOT = 62;  // 아래 (1줄 레이블 + 여유)
 
+const MIN_ZOOM = 0.7;
+const MAX_ZOOM = 2.2;
+const ZOOM_STEP = 0.2;
+const FIT_MAX_HEIGHT = 320;
+
+function clampZoom(value) {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
+}
+
 export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [canvasWidth, setCanvasWidth] = useState(0);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    setZoom(1);
+  }, [nodes, edges]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    const updateWidth = () => {
+      setCanvasWidth(Math.max(0, Math.floor(canvas.clientWidth)));
+    };
+    updateWidth();
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
+
   if (!nodes || !edges) return null;
 
   // 노드 bounding box → viewBox 계산
@@ -56,75 +88,125 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
     vbH = Math.max(maxY - minY + LBL_TOP + LBL_BOT, height);
   }
 
+  const fitScale = canvasWidth
+    ? Math.min(canvasWidth / vbW, FIT_MAX_HEIGHT / vbH)
+    : 1;
+  const svgW = Math.floor(vbW * fitScale * zoom);
+  const svgH = Math.floor(vbH * fitScale * zoom);
+  const zoomPct = Math.round(zoom * 100);
+  const zoomOut = () => setZoom(prev => clampZoom(prev - ZOOM_STEP));
+  const zoomIn = () => setZoom(prev => clampZoom(prev + ZOOM_STEP));
+  const resetZoom = () => setZoom(1);
+
   return (
-    <svg
-      width="100%"
-      viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
-      preserveAspectRatio="xMidYMid meet"
-      style={{ display: 'block', maxHeight: '280px' }}
-    >
-      <defs>
-        <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L6,3 z" fill="#cbd5e1"/>
-        </marker>
-        <marker id="arr-active" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L6,3 z" fill="#4f6ef7"/>
-        </marker>
-        {nodes.filter(n => n.status !== 'missing').map(n => (
-          <filter key={n.id} id={`g${n.id}`} x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="3" result="blur"/>
-            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        ))}
-      </defs>
+    <div className="kg-viewer">
+      <div className="kg-viewer-toolbar" aria-label="지식 그래프 확대 컨트롤">
+        <button
+          type="button"
+          className="kg-zoom-btn"
+          onClick={zoomOut}
+          disabled={zoom <= MIN_ZOOM}
+          aria-label="축소"
+          title="축소"
+        >
+          −
+        </button>
+        <span className="kg-zoom-value" aria-label={`확대 비율 ${zoomPct}%`}>
+          {zoomPct}%
+        </span>
+        <button
+          type="button"
+          className="kg-zoom-btn"
+          onClick={zoomIn}
+          disabled={zoom >= MAX_ZOOM}
+          aria-label="확대"
+          title="확대"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="kg-zoom-btn"
+          onClick={resetZoom}
+          disabled={zoom === 1}
+          aria-label="확대 초기화"
+          title="확대 초기화"
+        >
+          ↺
+        </button>
+      </div>
+      <div className="kg-viewer-canvas" ref={canvasRef}>
+        <svg
+          className="kg-svg"
+          width={svgW}
+          height={svgH}
+          viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="#cbd5e1"/>
+            </marker>
+            <marker id="arr-active" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="#4f6ef7"/>
+            </marker>
+            {nodes.filter(n => n.status !== 'missing').map(n => (
+              <filter key={n.id} id={`g${n.id}`} x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="3" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            ))}
+          </defs>
 
-      {edges.map((e, i) => {
-        const s = nodes.find(n => n.id === e.from);
-        const t = nodes.find(n => n.id === e.to);
-        if (!s || !t) return null;
-        const hl = hovered === s.id || hovered === t.id;
-        return (
-          <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-            stroke={hl ? '#4f6ef7' : '#cbd5e1'}
-            strokeWidth={hl ? 2 : 1.5}
-            markerEnd={hl ? 'url(#arr-active)' : 'url(#arr)'}
-            opacity={0.8}
-          />
-        );
-      })}
+          {edges.map((e, i) => {
+            const s = nodes.find(n => n.id === e.from);
+            const t = nodes.find(n => n.id === e.to);
+            if (!s || !t) return null;
+            const hl = hovered === s.id || hovered === t.id;
+            return (
+              <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
+                stroke={hl ? '#4f6ef7' : '#cbd5e1'}
+                strokeWidth={hl ? 2 : 1.5}
+                markerEnd={hl ? 'url(#arr-active)' : 'url(#arr)'}
+                opacity={0.8}
+              />
+            );
+          })}
 
-      {nodes.map(n => {
-        const color = STATUS_COLOR[n.status] || STATUS_COLOR.missing;
-        const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
-        const isHov = hovered === n.id;
-        const isSel = selectedNodeId === n.id;
-        const r = 26;
-        return (
-          <g key={n.id} transform={`translate(${n.x},${n.y})`}
-            onMouseEnter={() => setHovered(n.id)}
-            onMouseLeave={() => setHovered(null)}
-            onClick={() => onNodeClick && onNodeClick(n)}
-            style={{ cursor: onNodeClick ? 'pointer' : 'default' }}>
-            {isSel && (
-              <circle r={r + 11} fill="none"
-                stroke="#4f6ef7" strokeWidth={2} strokeDasharray="4 3" opacity={0.8}
-                style={{ transition: 'all 0.2s ease' }}/>
-            )}
-            {n.status !== 'missing' && (
-              <circle r={r + 7} fill={color} opacity={isHov ? 0.18 : 0.1}
-                style={{ transition: 'opacity 0.2s' }}/>
-            )}
-            <circle r={r} fill={color} stroke={stroke} strokeWidth={isHov || isSel ? 2.5 : 1.5}
-              filter={n.status !== 'missing' ? `url(#g${n.id})` : ''}
-              style={{ transition: 'all 0.3s ease' }}
-            />
-            <NodeLabel label={n.label} r={r}
-              fill={n.status === 'missing' ? '#94a3b8' : '#0f172a'}
-              fontWeight={isHov || isSel ? 700 : 500}
-            />
-          </g>
-        );
-      })}
-    </svg>
+          {nodes.map(n => {
+            const color = STATUS_COLOR[n.status] || STATUS_COLOR.missing;
+            const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
+            const isHov = hovered === n.id;
+            const isSel = selectedNodeId === n.id;
+            const r = 26;
+            return (
+              <g key={n.id} transform={`translate(${n.x},${n.y})`}
+                onMouseEnter={() => setHovered(n.id)}
+                onMouseLeave={() => setHovered(null)}
+                onClick={() => onNodeClick && onNodeClick(n)}
+                style={{ cursor: onNodeClick ? 'pointer' : 'default' }}>
+                {isSel && (
+                  <circle r={r + 11} fill="none"
+                    stroke="#4f6ef7" strokeWidth={2} strokeDasharray="4 3" opacity={0.8}
+                    style={{ transition: 'all 0.2s ease' }}/>
+                )}
+                {n.status !== 'missing' && (
+                  <circle r={r + 7} fill={color} opacity={isHov ? 0.18 : 0.1}
+                    style={{ transition: 'opacity 0.2s' }}/>
+                )}
+                <circle r={r} fill={color} stroke={stroke} strokeWidth={isHov || isSel ? 2.5 : 1.5}
+                  filter={n.status !== 'missing' ? `url(#g${n.id})` : ''}
+                  style={{ transition: 'all 0.3s ease' }}
+                />
+                <NodeLabel label={n.label} r={r}
+                  fill={n.status === 'missing' ? '#94a3b8' : '#0f172a'}
+                  fontWeight={isHov || isSel ? 700 : 500}
+                />
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
   );
 }
