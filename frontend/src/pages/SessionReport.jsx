@@ -95,17 +95,18 @@ export default function SessionReport() {
   const sessionId = new URLSearchParams(search).get('session_id') || state?.session_record_id;
   const [reportData, setReportData] = useState(() => initialReportData(state));
 
-  const document_id   = reportData.document_id;
-  const topic         = reportData.topic;
-  const scores        = reportData.scores;
-  const total         = reportData.total;
-  const coverage      = reportData.coverage;
-  const missingNodes  = reportData.missing_nodes;
-  const misconceptions= reportData.misconceptions;
-  const turnCount     = reportData.turn_count;
+  const document_id    = reportData.document_id;
+  const topic          = reportData.topic;
+  const scores         = reportData.scores;
+  const total          = reportData.total;
+  const coverage       = reportData.coverage;
+  const missingNodes   = reportData.missing_nodes;
+  const misconceptions = reportData.misconceptions;
+  const turnCount      = reportData.turn_count;
+  const closingMessage = state?.closing_message || '';
 
   const totalPct = Math.round((total / 12) * 100);
-  const passed = totalPct >= 70;
+  const passed = totalPct >= 80;
 
   const [beforeNodes, setBeforeNodes] = useState([]);
   const [beforeEdges, setBeforeEdges] = useState([]);

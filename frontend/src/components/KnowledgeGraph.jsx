@@ -4,7 +4,31 @@ import './KnowledgeGraph.css';
 function splitLabel(label) {
   const text = String(label || '');
   if (!text) return [''];
-  return [text.length > 10 ? text.slice(0, 10) + '…' : text];
+
+  if (text.includes(' ')) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines = [];
+    let current = '';
+    for (const word of words) {
+      if (lines.length >= 3) break;
+      if (!current) {
+        current = word;
+      } else if ((current + ' ' + word).length <= 6) {
+        current += ' ' + word;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    }
+    if (current && lines.length < 3) lines.push(current);
+    return lines;
+  }
+
+  const lines = [];
+  for (let i = 0; i < text.length && lines.length < 3; i += 6) {
+    lines.push(text.slice(i, i + 6));
+  }
+  return lines;
 }
 
 function NodeLabel({ label, r, fill, fontWeight }) {
@@ -13,7 +37,7 @@ function NodeLabel({ label, r, fill, fontWeight }) {
     <text textAnchor="middle" fill={fill} fontSize={22}
       fontFamily="Inter,sans-serif" fontWeight={fontWeight}>
       {lines.map((line, i) => (
-        <tspan key={i} x={0} y={r + 33 + i * 19}>{line}</tspan>
+        <tspan key={i} x={0} y={r + 33 + i * 24}>{line}</tspan>
       ))}
     </text>
   );
@@ -37,7 +61,7 @@ const STATUS_STROKE = {
 // 레이블이 노드 중심에서 벗어나는 여백
 const LBL_X   = 86;  // 좌우 (레이블 최대 폭의 절반)
 const LBL_TOP = 34;  // 위
-const LBL_BOT = 62;  // 아래 (1줄 레이블 + 여유)
+const LBL_BOT = 100;  // 아래 (최대 3줄 레이블 + 여유)
 
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.2;

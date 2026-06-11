@@ -22,6 +22,7 @@ export default function TeacherMode() {
   const [error, setError] = useState('');
   const [sessionDone, setSessionDone] = useState(false);
   const [coverage, setCoverage] = useState(null);
+  const pendingReportRef = useRef(null);
 
   const conversationHistory = useRef([]);
   const sessionHistory = useRef([]);
@@ -116,8 +117,8 @@ export default function TeacherMode() {
         const closingText = res.closing_message || '수고하셨습니다! 세션을 종료합니다.';
         setMessages(m => [...m, { role: 'ai', text: closingText, time: t }]);
         conversationHistory.current = [...conversationHistory.current, { role: 'assistant', content: closingText }];
+        pendingReportRef.current = res;
         setSessionDone(true);
-        setTimeout(() => navigateToReport(res), 1500);
       } else {
         const aiText = res.next_question || '계속 설명해주세요.';
         setMessages(m => [...m, { role: 'ai', text: aiText, time: t }]);
@@ -330,29 +331,46 @@ export default function TeacherMode() {
             )}
           </div>
 
-          <div className="chat-input-bar">
-            <textarea
-              className="chat-textarea"
-              placeholder={sessionDone ? '세션이 종료되었습니다.' : '개념을 AI 학생에게 설명해 보세요... (Enter: 전송, Shift+Enter: 줄바꿈)'}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-              rows={2}
-              disabled={loading || sessionDone}
-            />
-            <button
-              className={`mic-btn${isRecording ? ' recording' : ''}${isTranscribing ? ' transcribing' : ''}`}
-              onClick={toggleVoice}
-              disabled={loading || sessionDone || isTranscribing}
-              title={isTranscribing ? '음성 변환 중' : isRecording ? '음성 입력 중단' : '음성으로 입력'}
-            >
-              {isTranscribing ? '…' : isRecording ? '⏹' : '🎙️'}
-            </button>
-            <button className="btn btn-primary send-btn" onClick={send}
-              disabled={!input.trim() || loading || sessionDone}>
-              전송
-            </button>
-          </div>
+          {sessionDone ? (
+            <div style={{
+              padding: '16px 20px',
+              borderTop: '1px solid #e2e8f0',
+              display: 'flex',
+              justifyContent: 'center',
+            }}>
+              <button
+                className="btn btn-primary"
+                style={{ padding: '12px 32px', fontSize: 15, fontWeight: 700 }}
+                onClick={() => navigateToReport(pendingReportRef.current)}
+              >
+                📊 리포트 확인하기
+              </button>
+            </div>
+          ) : (
+            <div className="chat-input-bar">
+              <textarea
+                className="chat-textarea"
+                placeholder="개념을 AI 학생에게 설명해 보세요... (Enter: 전송, Shift+Enter: 줄바꿈)"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                rows={2}
+                disabled={loading}
+              />
+              <button
+                className={`mic-btn${isRecording ? ' recording' : ''}${isTranscribing ? ' transcribing' : ''}`}
+                onClick={toggleVoice}
+                disabled={loading || isTranscribing}
+                title={isTranscribing ? '음성 변환 중' : isRecording ? '음성 입력 중단' : '음성으로 입력'}
+              >
+                {isTranscribing ? '…' : isRecording ? '⏹' : '🎙️'}
+              </button>
+              <button className="btn btn-primary send-btn" onClick={send}
+                disabled={!input.trim() || loading}>
+                전송
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="evaluator-panel">
