@@ -93,8 +93,13 @@ def compute_rubric_scores(
     total_nodes = len(valid_ref_nodes)
     confirmed = get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)
     partial   = get_nodes_by_status(user_kg, NodeStatus.PARTIAL)
-    concept_score = (1.0 * len(confirmed) + 0.5 * len(partial)) / total_nodes if total_nodes > 0 else 0.0
-    concept = 3 if concept_score >= 0.7 else 2 if concept_score >= 0.4 else 1 if concept_score >= 0.2 else 0
+
+    # 각 노드의 completion_ratio 합산 / 전체 ref 노드 수
+    concept_score = (
+        sum(user_kg.nodes[n].get("completion_ratio", 0.0) for n in valid_ref_nodes if n in user_kg)
+        / total_nodes
+    ) if total_nodes > 0 else 0.0
+    concept = 3 if concept_score >= 0.8 else 2 if concept_score >= 0.6 else 1 if concept_score >= 0.4 else 0
 
     # ── accuracy ──
     misconception_nodes = [
@@ -103,11 +108,16 @@ def compute_rubric_scores(
         and is_evaluation_node(n, attrs)
     ]
     misc_count = len(misconception_nodes)
-    mentioned_node_count = len(confirmed) + len(partial) + misc_count
+    mentioned_nodes = confirmed + partial  # misconception 제외
+    mentioned_node_count = len(mentioned_nodes)
     if mentioned_node_count == 0:
         accuracy = 0
     else:
-        accuracy_score = (1.0 * len(confirmed) + 0.5 * len(partial)) / mentioned_node_count
+        # 언급된 노드(confirmed+partial)의 completion_ratio 합산 / 언급 노드 수
+        accuracy_score = sum(
+            user_kg.nodes[n].get("completion_ratio", 0.0)
+            for n in mentioned_nodes if n in user_kg
+        ) / mentioned_node_count
         if accuracy_score >= 0.7 and misc_count == 0:
             accuracy = 3
         elif accuracy_score >= 0.4 and misc_count <= 1:
