@@ -11,7 +11,8 @@ os.environ.setdefault("OPENAI_API_KEY", "test")
 
 from app.api.v1 import sessions
 from app.services import session_service
-from app.services.evaluator_llm import EvaluatorResult, MAX_TURNS, RubricScores
+from app.services.evaluator_llm import EvaluatorResult
+from app.services.rubric_service import MAX_TURNS, RubricScores
 from app.services.session_service import _save_session_record
 
 
@@ -108,6 +109,47 @@ def test_get_session_report_returns_saved_kg_snapshots():
     assert response.user_kg_before["nodes"][0]["status"] == "partial"
     assert response.user_kg_after["nodes"][0]["status"] == "confirmed"
     assert response.created_at == created_at
+
+
+def test_get_session_report_normalizes_confirmed_snapshot_with_unmet_checklist():
+    record = SimpleNamespace(
+        id=7,
+        document_id=3,
+        topic="TCP",
+        scores={"concept": 3},
+        total_score=10,
+        turn_count=5,
+        coverage_percent=66.6,
+        misconceptions=[],
+        session_summary=None,
+        user_kg_before=None,
+        user_kg_after={
+            "nodes": [
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist": [
+                        {
+                            "item": "TCP 설명",
+                            "met": False,
+                            "source_quote": "TCP는 연결 지향 프로토콜이다.",
+                            "page_number": 2,
+                        },
+                    ],
+                },
+            ],
+            "edges": [],
+        },
+        created_at=None,
+    )
+
+    response = sessions.api_get_session_report(7, db=FakeDB(record), current_user=CURRENT_USER)
+
+    node = response.user_kg_after["nodes"][0]
+    assert node["status"] == "partial"
+    assert node["met_count"] == 0
+    assert node["checklist"][0]["source_quote"] == "TCP는 연결 지향 프로토콜이다."
+    assert node["checklist"][0]["page_number"] == 2
 
 
 def test_get_session_report_handles_legacy_record_without_snapshots():

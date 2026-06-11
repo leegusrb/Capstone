@@ -30,6 +30,7 @@ from app.services.session_service import (
     process_turn,
     start_session,
 )
+from app.services.kg_service import strip_checklist_for_user_view
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -156,6 +157,12 @@ def _get_ready_document(db: Session, document_id: int, user_id: int) -> Document
             ),
         )
     return doc
+
+
+def _normalize_report_kg_snapshot(snapshot: dict | None) -> dict | None:
+    if not snapshot:
+        return snapshot
+    return strip_checklist_for_user_view(snapshot, include_sources=True)
 
 
 # ── 엔드포인트 ─────────────────────────────────────────────
@@ -304,7 +311,7 @@ def api_get_session_report(
         coverage=coverage,
         missing_nodes=summary.get("missing_nodes") or [],
         misconceptions=record.misconceptions or [],
-        user_kg_before=record.user_kg_before,
-        user_kg_after=record.user_kg_after,
+        user_kg_before=_normalize_report_kg_snapshot(record.user_kg_before),
+        user_kg_after=_normalize_report_kg_snapshot(record.user_kg_after),
         created_at=record.created_at,
     )

@@ -27,6 +27,7 @@ from app.services.kg_service import (
     NodeStatus,
     get_edges_by_status,
     get_nodes_by_status,
+    is_evaluation_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,10 @@ def compute_rubric_scores(
                    ratio≥0.7→3 / ratio≥0.4→2 / ratio≥0.2→1 / else→0
     """
     # ── concept ──
-    valid_ref_nodes = [n for n in reference_kg.nodes() if not str(n).startswith("__")]
+    valid_ref_nodes = [
+        n for n, attrs in reference_kg.nodes(data=True)
+        if is_evaluation_node(n, attrs)
+    ]
     total_nodes = len(valid_ref_nodes)
     confirmed = get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)
     partial   = get_nodes_by_status(user_kg, NodeStatus.PARTIAL)
@@ -95,7 +99,8 @@ def compute_rubric_scores(
     # ── accuracy ──
     misconception_nodes = [
         n for n, attrs in user_kg.nodes(data=True)
-        if attrs.get("status") == NodeStatus.MISCONCEPTION and not str(n).startswith("__")
+        if attrs.get("status") == NodeStatus.MISCONCEPTION
+        and is_evaluation_node(n, attrs)
     ]
     misc_count = len(misconception_nodes)
     mentioned_node_count = len(confirmed) + len(partial) + misc_count

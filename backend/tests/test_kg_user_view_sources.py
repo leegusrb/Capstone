@@ -84,8 +84,21 @@ def test_default_user_and_reference_views_hide_source_quote():
     assert "checklist" not in ref_view["nodes"][0]
 
 
+def test_user_view_downgrades_confirmed_when_no_checklist_items_are_met():
+    kg = _sample_kg()
+    kg["nodes"][0]["status"] = "confirmed"
+    kg["nodes"][0]["checklist_result"] = []
+
+    view = strip_checklist_for_user_view(kg)
+
+    assert view["nodes"][0]["status"] == "partial"
+    assert view["nodes"][0]["met_count"] == 0
+    assert view["nodes"][0]["completion_ratio"] == 0.0
+
+
 if __name__ == "__main__":
     test_user_view_includes_stored_source_page_when_enabled()
     test_user_view_falls_back_to_chunk_match_for_legacy_items()
     test_default_user_and_reference_views_hide_source_quote()
+    test_user_view_downgrades_confirmed_when_no_checklist_items_are_met()
     print("ok")

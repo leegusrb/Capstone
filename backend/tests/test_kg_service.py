@@ -19,7 +19,7 @@ from app.services.kg_service import (
     get_kg_coverage,
     get_misconceptions,
 )
-from app.services.evaluator_llm import compute_rubric_scores
+from app.services.rubric_service import compute_rubric_scores
 import networkx as nx
 
 
@@ -132,6 +132,73 @@ def test_update_user_kg():
     assert user_kg.nodes["ACK"]["status"]       == NodeStatus.MISSING
 
     print("✅ test_update_user_kg 통과")
+
+
+def test_confirmed_without_checklist_results_does_not_confirm_node():
+    ref_kg = make_reference_kg()
+    user_kg = init_user_kg(ref_kg)
+
+    evaluator_result = {
+        "updated_user_kg": {
+            "nodes": [
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist_result": [],
+                    "completion_ratio": 1.0,
+                },
+            ],
+            "edges": [],
+        },
+        "misconceptions": [],
+    }
+
+    user_kg = update_user_kg_from_evaluator(user_kg, evaluator_result)
+
+    assert user_kg.nodes["TCP"]["status"] == NodeStatus.PARTIAL
+    assert user_kg.nodes["TCP"]["completion_ratio"] == 0.0
+    assert user_kg.nodes["TCP"]["checklist_result"] == [
+        {"item": "TCP 설명", "met": False},
+    ]
+
+
+def test_missing_checklist_results_do_not_clear_existing_met_items():
+    ref_kg = make_reference_kg()
+    user_kg = init_user_kg(ref_kg)
+
+    user_kg = update_user_kg_from_evaluator(user_kg, {
+        "updated_user_kg": {
+            "nodes": [
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist_result": [{"item": "TCP 설명", "met": True}],
+                    "completion_ratio": 1.0,
+                },
+            ],
+            "edges": [],
+        },
+        "misconceptions": [],
+    })
+    user_kg = update_user_kg_from_evaluator(user_kg, {
+        "updated_user_kg": {
+            "nodes": [
+                {
+                    "id": "TCP",
+                    "status": "confirmed",
+                    "checklist_result": [],
+                    "completion_ratio": 1.0,
+                },
+            ],
+            "edges": [],
+        },
+        "misconceptions": [],
+    })
+
+    assert user_kg.nodes["TCP"]["status"] == "confirmed"
+    assert user_kg.nodes["TCP"]["checklist_result"] == [
+        {"item": "TCP 설명", "met": True},
+    ]
 
 
 # ──────────────────────────────────────────────

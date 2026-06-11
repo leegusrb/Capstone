@@ -146,6 +146,45 @@ def deserialize_kg(data: dict) -> nx.DiGraph:
     return graph
 
 
+def _merge_checklist_results(
+    original_checklist: list[dict],
+    existing_result: list[dict],
+    incoming_result: list[dict],
+) -> list[dict]:
+    """Reference 체크리스트 기준으로 met 결과를 병합한다."""
+    checklist_items = [
+        ck.get("item", "")
+        for ck in original_checklist
+        if ck.get("item", "")
+    ]
+    if not checklist_items:
+        return incoming_result or existing_result or []
+
+    existing_met = {
+        item.get("item"): bool(item.get("met"))
+        for item in existing_result
+    }
+    incoming_met = {
+        item.get("item"): bool(item.get("met"))
+        for item in incoming_result
+    }
+
+    return [
+        {
+            "item": item,
+            "met": incoming_met.get(item, False) or existing_met.get(item, False),
+        }
+        for item in checklist_items
+    ]
+
+
+def _status_for_checklist_view(status: Any, checklist: list[dict]) -> Any:
+    if status == NodeStatus.CONFIRMED and checklist:
+        if not all(item.get("met", False) for item in checklist):
+            return NodeStatus.PARTIAL
+    return status
+
+
 # ──────────────────────────────────────────────
 # 3. User KG 초기화
 # ──────────────────────────────────────────────
@@ -254,40 +293,40 @@ def update_user_kg_from_evaluator(
         "completion_ratio": 0.0~1.0
       }
 
-    노드 상태(status)는 PDF §6 표에 따라 Evaluator가 이미 판정한 값을 그대로 신뢰한다.
-    체크리스트 항목 met 여부 ↔ 노드 상태의 정합성 검증은 Evaluator의 권한이며,
-    여기서는 단순 저장만 수행한다.
+    노드 상태(status)는 checklist_result에서 다시 계산한다.
+    Evaluator가 checklist_result를 누락해도 completion_ratio만으로 confirmed가 되지 않게 한다.
     """
     updated = evaluator_result.get("updated_user_kg", {})
 
     for node in updated.get("nodes", []):
         node_id = node["id"]
         status = node.get("status", NodeStatus.MISSING)
-        checklist_result = node.get("checklist_result", [])
+        incoming_checklist_result = node.get("checklist_result", [])
         completion_ratio = float(node.get("completion_ratio", 0.0))
 
         if node_id in user_kg:
             # checklist 병합: met=true는 누적 유지 (한 번 확인된 항목은 되돌리지 않음)
             existing_cl = user_kg.nodes[node_id].get("checklist_result", [])
-            if existing_cl and checklist_result:
-                existing_met = {item["item"]: item.get("met", False) for item in existing_cl}
-                checklist_result = [
-                    {"item": item["item"], "met": item.get("met", False) or existing_met.get(item["item"], False)}
-                    for item in checklist_result
-                ]
+            original_cl = user_kg.nodes[node_id].get("checklist", [])
+            checklist_result = _merge_checklist_results(
+                original_cl,
+                existing_cl,
+                incoming_checklist_result,
+            )
             # 병합된 checklist 기반으로 completion_ratio 재계산
             if checklist_result:
                 met_count = sum(1 for item in checklist_result if item.get("met", False))
                 completion_ratio = met_count / len(checklist_result)
+            elif original_cl:
+                completion_ratio = 0.0
 
-            # status 결정: 병합된 completion_ratio 기반으로 확정
-            # misconception이더라도 OR 병합 결과 모든 항목이 충족됐으면 confirmed 유지
-            if status == NodeStatus.MISCONCEPTION:
-                if completion_ratio >= 1.0:
-                    status = NodeStatus.CONFIRMED  # 체크리스트 전부 충족 → confirmed 보호
-                # else: completion_ratio < 1.0 → misconception 유지
-            else:
-                status = NodeStatus.CONFIRMED if completion_ratio >= 1.0 else NodeStatus.PARTIAL
+            # status 결정: 병합된 checklist ratio 기준으로 확정
+            if original_cl:
+                if status == NodeStatus.MISCONCEPTION:
+                    if completion_ratio >= 1.0:
+                        status = NodeStatus.CONFIRMED
+                else:
+                    status = NodeStatus.CONFIRMED if completion_ratio >= 1.0 else NodeStatus.PARTIAL
 
             # confidence_level 누적: high > medium > low 우선순위로 최고값 유지
             _CONF_PRIORITY = {"high": 2, "medium": 1, "low": 0}
@@ -514,9 +553,14 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
         evaluator_result   = attrs.get("checklist_result", [])
 
         met_by_item = {
+            ck.get("item"): bool(ck.get("met"))
+            for ck in original_checklist
+            if "met" in ck
+        }
+        met_by_item.update({
             r.get("item"): bool(r.get("met"))
             for r in evaluator_result
-        }
+        })
 
         merged = [
             {
@@ -528,11 +572,11 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
 
         view.append({
             "id":               node_id,
-            "status":           attrs.get("status", NodeStatus.MISSING),
+            "status":           _status_for_checklist_view(attrs.get("status", NodeStatus.MISSING), merged),
             "checklist":        merged,
             "met_count":        sum(1 for ck in merged if ck["met"]),
             "total_count":      len(merged),
-            "completion_ratio": float(attrs.get("completion_ratio", 0.0)),
+            "completion_ratio": sum(1 for ck in merged if ck["met"]) / len(merged) if merged else 0.0,
         })
     return view
 
@@ -575,9 +619,14 @@ def strip_checklist_for_user_view(
         evaluator_result   = node.get("checklist_result", [])   # [{item, met}, ...]
 
         met_by_item = {
+            ck.get("item"): bool(ck.get("met"))
+            for ck in original_checklist
+            if "met" in ck
+        }
+        met_by_item.update({
             r.get("item"): bool(r.get("met"))
             for r in evaluator_result
-        }
+        })
 
         merged = []
         for ck in original_checklist:
@@ -600,9 +649,15 @@ def strip_checklist_for_user_view(
             k: v for k, v in node.items()
             if k not in {"checklist", "checklist_result"}
         }
+        met_count = sum(1 for ck in merged if ck["met"])
         safe["checklist"]   = merged
-        safe["met_count"]   = sum(1 for ck in merged if ck["met"])
+        safe["met_count"]   = met_count
         safe["total_count"] = len(merged)
+        safe["completion_ratio"] = met_count / len(merged) if merged else 0.0
+        safe["status"] = _status_for_checklist_view(
+            safe.get("status", NodeStatus.MISSING),
+            merged,
+        )
         safe_nodes.append(safe)
 
     return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
