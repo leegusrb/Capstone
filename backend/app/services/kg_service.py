@@ -280,8 +280,13 @@ def update_user_kg_from_evaluator(
                 met_count = sum(1 for item in checklist_result if item.get("met", False))
                 completion_ratio = met_count / len(checklist_result)
 
-            # status 결정: misconception은 그대로 / 나머지는 병합 ratio 기준
-            if status != NodeStatus.MISCONCEPTION:
+            # status 결정: 병합된 completion_ratio 기반으로 확정
+            # misconception이더라도 OR 병합 결과 모든 항목이 충족됐으면 confirmed 유지
+            if status == NodeStatus.MISCONCEPTION:
+                if completion_ratio >= 1.0:
+                    status = NodeStatus.CONFIRMED  # 체크리스트 전부 충족 → confirmed 보호
+                # else: completion_ratio < 1.0 → misconception 유지
+            else:
                 status = NodeStatus.CONFIRMED if completion_ratio >= 1.0 else NodeStatus.PARTIAL
 
             # confidence_level 누적: high > medium > low 우선순위로 최고값 유지
@@ -371,16 +376,37 @@ def get_edges_by_status(user_kg: nx.DiGraph, status: EdgeStatus) -> list[dict]:
     ]
 
 
-def get_student_context(user_kg: nx.DiGraph) -> dict:
+def get_student_context(user_kg: nx.DiGraph, reference_kg: nx.DiGraph | None = None) -> dict:
     """
     Student LLM에 전달할 컨텍스트 추출.
     confirmed + partial 노드/엣지만 포함. missing은 절대 포함 안 됨.
     """
+    confirmed_nodes = get_nodes_by_status(user_kg, NodeStatus.CONFIRMED)
+    partial_nodes   = get_nodes_by_status(user_kg, NodeStatus.PARTIAL)
+    confirmed_edges = get_edges_by_status(user_kg, EdgeStatus.CONFIRMED)
+    partial_edges   = get_edges_by_status(user_kg, EdgeStatus.PARTIAL)
+
+    # 개념 커버리지 비율 (reference_kg 있을 때만 계산)
+    coverage_ratio = 0.0
+    if reference_kg is not None:
+        ref_total = sum(1 for n, a in reference_kg.nodes(data=True) if is_evaluation_node(n, a))
+        if ref_total > 0:
+            coverage_ratio = (len(confirmed_nodes) + 0.5 * len(partial_nodes)) / ref_total
+
+    # 언급된 노드 중 confidence_level이 low인 것
+    mentioned = confirmed_nodes + partial_nodes
+    low_confidence_nodes = [
+        n for n in mentioned
+        if n in user_kg and user_kg.nodes[n].get("confidence_level", "low") == "low"
+    ]
+
     return {
-        "confirmed_nodes": get_nodes_by_status(user_kg, NodeStatus.CONFIRMED),
-        "partial_nodes": get_nodes_by_status(user_kg, NodeStatus.PARTIAL),
-        "confirmed_edges": get_edges_by_status(user_kg, EdgeStatus.CONFIRMED),
-        "partial_edges": get_edges_by_status(user_kg, EdgeStatus.PARTIAL),
+        "confirmed_nodes":      confirmed_nodes,
+        "partial_nodes":        partial_nodes,
+        "confirmed_edges":      confirmed_edges,
+        "partial_edges":        partial_edges,
+        "coverage_ratio":       round(coverage_ratio, 2),
+        "low_confidence_nodes": low_confidence_nodes,
     }
 
 

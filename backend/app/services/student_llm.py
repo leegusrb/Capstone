@@ -37,35 +37,18 @@ class StudentResponse:
 
 STUDENT_SYSTEM_PROMPT = """\
 ===역할===
-당신은 선생님의 설명을 듣는 학생입니다.
-사전 지식이 전혀 없으며, 오직 이 대화에서 선생님이 명시적으로 말한 내용만 알고 있습니다.
-
-===핵심 제약===
-- 당신의 유일한 지식 출처는 지금까지 선생님이 말한 내용뿐입니다.
-- 교재, 참고 자료, 외부 지식에는 접근할 수 없습니다.
-- 선생님이 명시적으로 말하지 않은 내용은 절대로 추론하거나 가정하거나 채워 넣지 마세요.
+선생님의 설명을 듣는 학생입니다. 이 대화에서 선생님이 명시적으로 말한 내용만 알고 있으며, 외부 지식은 일절 없습니다. 
+이 제약은 질문에도 동일하게 적용됩니다.
 
 ===질문 규칙===
-1. 질문은 반드시 정확히 하나의 개념이나 용어만 대상으로 해야 합니다.
-   "각각", "모두", "전부", "조합", "전반적으로" 등의 표현으로 여러 항목을 묶지 마세요.
-   [예시]
-    나쁜 예: "사과, 딸기, 포도는 각각 무슨 색인가요?"
-    좋은 예: "사과는 무슨 색인가요?"
-2. 응답당 질문은 하나만, 최대 1~2문장으로 제한합니다.
-3. 칭찬하지 마세요.
-4. 한국어로 답변하세요.
-5. confirmed 개념은 이미 이해한 것으로 간주하며 다시 묻지 마세요.
-6. 아직 설명되지 않은 개념(confirmed, partial 노드 외 개념)을 직접 언급하지 마세요.
-7. partial 개념에 대해 질문할 때는 대화에서 선생님이 이미 설명한 내용은 다시 요구하지 말고,
-    아직 설명하지 않은 새로운 측면만 물어보세요.
-8. 친근하고 자연스러운 어조로 작성하세요.
-9. 선생님이 "모르겠다", "잘 모르겠어요", "기억이 안 난다" 등 모른다는 표현을 하면:
-   - 한 문장으로 자연스럽게 넘어가는 반응을 한 뒤 (예: "아, 그렇군요. 괜찮아요!")
-   - 직전에 물었던 것과 다른 개념이나 관계에 대해 새로운 질문을 하세요.
-   - 같은 질문을 다시 하거나 같은 개념을 반복해서 묻지 마세요.
-10. 질문 생성 후 "문장의 의미"가 이상하지 않은지 다시 한 번 확인하세요.
-
-질문 텍스트만 출력하세요.
+1. 질문은 하나의 개념만, 1~2문장으로 제한합니다.
+   나쁜 예: "A, B, C는 각각 무엇인가요?" / 좋은 예: "A는 무엇인가요?"
+2. 칭찬하지 마세요.
+3. 한국어, 친근하고 자연스러운 어조로 작성하세요.
+4. confirmed 개념은 이미 이해한 것으로 간주해 다시 묻지 마세요.
+5. 막연한 질문(예: "[개념]에 대해 자세히 설명해주세요")은 하지 마세요.
+6. 선생님이 "모르겠다" 등 모른다는 표현을 하면: 자연스럽게 넘어간 뒤 직전과 다른 개념이나 관계를 질문하세요.
+7. 질문 텍스트만 출력하세요.
 """
 
 
@@ -96,9 +79,8 @@ _STUDENT_RETURNING_TEMPLATE = """\
 아직 설명되지 않은 부분이나 partial로 이해한 개념을 중심으로 첫 번째 질문을 생성하세요.
 
 === 질문 생성 지침 ===
-- confirmed 개념은 이미 충분히 이해한 것이므로 다시 묻지 마세요.
 - partial 개념이 있다면 해당 개념의 불명확한 부분을 우선 질문하세요.
-- partial 개념도 없다면 아직 설명되지 않은 새로운 개념에 대해 질문하세요.
+- partial 개념이 없다면 이 학습 주제에서 아직 다루지 않은 내용이 있는지 열린 방식으로 물어보세요.
 - "지난번에", "이어서" 같이 이전 세션을 자연스럽게 언급해도 좋습니다.
 """
 
@@ -108,31 +90,97 @@ _STUDENT_FOLLOWUP_TEMPLATE = """\
 === 학습 주제 ===
 {topic}
 
-=== 나의 현재 이해 상태 (선생님이 설명한 내용만을 기반으로) ===
-완전히 이해한 개념 (confirmed): {confirmed_nodes}
-부분적으로 이해한 개념 (partial): {partial_nodes}
-이해한 개념 간의 관계         : {confirmed_edges}
-불완전하게 이해한 관계        : {partial_edges}
-
-=== 이번 세션의 최근 대화 ===
+=== 최근 대화 ===
 {conversation_snippet}
 
-=== 질문 생성 지침 ===
-- 최근 대화에서 선생님이 마지막으로 말한 내용을 참고하세요.
-- 선생님의 마지막 발언이 "모르겠다", "기억이 안 난다", "잘 모르겠어요" 등 모른다는 표현이라면:
-  → 한 문장으로 자연스럽게 넘어간 뒤, 직전 질문과 다른 개념이나 관계를 질문하세요.
-- 아래 우선순위에 따라 질문 방향을 결정하세요:
-  1순위 — partial 개념이 있다면, 해당 개념에 대해 불명확한 부분을 더 자세히 질문
-  2순위 — partial 개념이 없다면, "오늘 배울 내용 중에 또 다른 개념이 있다면 알려주세요"와 같이
-           새로운 주제를 요청하는 열린 질문 (특정 개념 이름을 언급하지 말 것)
-  3순위 — 설명된 개념 중 이유나 방식이 빠진 부분이 있다면 해당 부분 질문
-  4순위 — 설명된 개념에 예시가 없다면 실제 사례 요청
-  5순위 — 여러 confirmed 개념이 있고 관계가 설명되지 않았다면 관계 질문
-- 이전에 했던 질문과 동일하거나 유사한 질문은 반복하지 마세요.
+━━━ 아래 순서대로 사고한 뒤 질문만 출력하세요 ━━━
+
+[1단계: 발언 유형 파악]
+선생님의 마지막 발언이 어떤 유형인지 구분하세요.
+
+  유형 A — 예고 발언
+    정의: "X에 대해 알아볼게요", "X를 설명할게요" 처럼 다음 내용을 선언만 하고 실제 설명은 없는 발언
+    처리: [2단계]~[3단계]를 건너뛰고, 예고된 주제 X에 대한 첫 질문을 생성하세요.
+
+  유형 B — 실제 설명
+    정의: 개념의 의미·특성·원리·관계 등을 직접 서술한 발언
+    처리: [2단계]로 진행하세요.
+
+[2단계: 설명 내용 파악]
+선생님이 방금 설명한 내용의 성격을 있는 그대로 파악하세요.
+- 종류·분류 / 특징·속성 / 관계·차이 / 과정·예시 중 어느 것인가?
+- ⚠ 선생님이 말하지 않은 단어(장점·단점·원인·결과 등)로 임의 재분류하지 마세요.
+
+[3단계: 다음 질문 방향 결정]
+아래 루브릭 신호를 확인하고, 해당 방향에 맞는 질문 유형을 결정하세요.
+
+{direction_block}
+
+[4단계: 질문 생성 및 검토]
+[1]~[3]의 분석을 바탕으로 질문을 작성하고 출력하세요.
+- 이미 선생님이 설명한 내용 재질문 금지
+- 이전 턴의 질문 반복 금지
+- 선생님이 언급하지 않은 새 개념 도입 금지 (새 내용 유도 방향은 열린 표현 허용)
+- 질문의 의미가 자연스럽고 올바른지 확인 후 출력
 """
 
 
 # ── Internal helpers ──────────────────────────────────────
+
+def _compute_direction_block(
+    coverage_ratio: float,
+    confirmed_nodes: list[str],
+    partial_nodes: list[str],
+    confirmed_edges: list[dict],
+    partial_edges: list[dict],
+    low_confidence_nodes: list[str],
+) -> str:
+    """
+    루브릭 신호를 우선순위(커버리지 → 논리성 → 구체성) 순으로 평가해
+    다음 질문 방향을 결정한다. 방향은 LLM이 아닌 코드가 확정한다.
+    """
+    mentioned_count = len(confirmed_nodes) + len(partial_nodes)
+    has_any_edge    = bool(confirmed_edges or partial_edges)
+
+    # 1순위: 개념 커버리지 부족 → 다른 개념으로 유도
+    if coverage_ratio < 0.5:
+        already_mentioned = ", ".join(confirmed_nodes + partial_nodes) or "없음"
+        return "\n".join([
+            f"▶ 개념 커버리지 부족 [{int(coverage_ratio * 100)}%] → 아직 다루지 않은 내용을 유도하는 질문",
+            f"  이미 설명된 개념 [{already_mentioned}]에 대한 추가·심화 질문 금지.",
+            "  최근 설명한 내용과 자연스럽게 이어지는, 아직 다루지 않은 다른 내용을 열린 방식으로 유도하세요.",
+        ])
+
+    # 2순위: 논리성 — 언급된 개념 간 관계 미설명
+    if mentioned_count >= 2 and not has_any_edge:
+        node_list = ", ".join(confirmed_nodes + partial_nodes)
+        return "\n".join([
+            "▶ 논리성 부족 → 개념 간 관계를 묻는 질문",
+            f"  설명된 개념: [{node_list}]",
+            "  이 개념들 사이의 관계, 차이점, 또는 연결고리를 질문하세요.",
+        ])
+
+    # 3순위: 구체성 — confidence_level이 낮은 노드
+    if low_confidence_nodes:
+        node_list = ", ".join(low_confidence_nodes)
+        return "\n".join([
+            "▶ 구체성 부족 → 예시·과정을 묻는 질문",
+            f"  대상 개념: [{node_list}]",
+            "  이 개념이 실제로 어떻게 작동하는지, 구체적인 예시나 과정을 질문하세요.",
+        ])
+
+    # 기본: partial 보완 또는 브리징
+    if partial_nodes:
+        return "\n".join([
+            "▶ 부분 이해 개념 보완 → 더 자세한 설명을 유도하는 질문",
+            f"  대상 개념: [{', '.join(partial_nodes)}]",
+            "  이 개념의 아직 설명되지 않은 측면을 질문하세요.",
+        ])
+    return "\n".join([
+        "▶ 전반적 이해 양호 → 새 내용 유도",
+        "  최근 설명한 내용에서 자연스럽게 이어지는 다른 내용이 있는지 열린 방식으로 유도하세요.",
+    ])
+
 
 def _format_edges(edges: list[dict]) -> str:
     if not edges:
@@ -193,17 +241,21 @@ def generate_student_question(
         else:
             user_prompt = _STUDENT_FIRST_TURN_TEMPLATE.format(topic=topic)
     else:
-        confirmed_nodes = student_context.get("confirmed_nodes", [])
-        partial_nodes   = student_context.get("partial_nodes", [])
-        confirmed_edges = student_context.get("confirmed_edges", [])
-        partial_edges   = student_context.get("partial_edges", [])
+        confirmed_nodes      = student_context.get("confirmed_nodes", [])
+        partial_nodes        = student_context.get("partial_nodes", [])
+        confirmed_edges      = student_context.get("confirmed_edges", [])
+        partial_edges        = student_context.get("partial_edges", [])
+        coverage_ratio       = student_context.get("coverage_ratio", 0.0)
+        low_confidence_nodes = student_context.get("low_confidence_nodes", [])
+
+        direction_block = _compute_direction_block(
+            coverage_ratio, confirmed_nodes, partial_nodes,
+            confirmed_edges, partial_edges, low_confidence_nodes,
+        )
 
         user_prompt = _STUDENT_FOLLOWUP_TEMPLATE.format(
             topic=topic,
-            confirmed_nodes=", ".join(confirmed_nodes) if confirmed_nodes else "(none)",
-            partial_nodes=", ".join(partial_nodes)     if partial_nodes   else "(none)",
-            confirmed_edges=_format_edges(confirmed_edges),
-            partial_edges=_format_edges(partial_edges),
+            direction_block=direction_block,
             conversation_snippet=_format_conversation(conversation_history),
         )
 

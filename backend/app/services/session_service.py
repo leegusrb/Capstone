@@ -40,8 +40,8 @@ from app.services.evaluator_llm import (
 )
 from app.services.rubric_service import (
     RubricScores,
-    SCORE_THRESHOLD,
     SCORE_CATEGORIES,
+    MAX_TURNS,
     compute_rubric_scores,
     evaluate_confidence_levels,
 )
@@ -147,8 +147,8 @@ def start_session(
     if not kgs:
         raise ValueError(f"Document {document_id}의 KG가 존재하지 않습니다. 먼저 PDF를 업로드하세요.")
 
-    _, user_kg = kgs
-    student_context = get_student_context(user_kg)
+    reference_kg, user_kg = kgs
+    student_context = get_student_context(user_kg, reference_kg)
 
     student_resp = generate_student_question(
         topic=topic,
@@ -236,59 +236,12 @@ def process_turn(
 
     score_dict = scores.to_dict()
     total = scores.total
-    is_sufficient = total >= SCORE_THRESHOLD
-    termination_reason = "score" if is_sufficient else None
     weak_areas = [cat for cat in SCORE_CATEGORIES if score_dict.get(cat, 0) <= 1]
 
     coverage      = get_kg_coverage(user_kg, reference_kg)
     missing_nodes = get_missing_nodes(user_kg)
 
     # ── 6. 세션 종료 분기 ──
-    if is_sufficient:
-        updated_history = session_history + [score_dict]
-        summary = build_session_summary(
-            session_history=updated_history,
-            user_kg=user_kg,
-            reference_kg=reference_kg,
-            termination_reason=termination_reason,
-        )
-        closing = generate_session_closing_message(
-            topic=topic,
-            termination_reason=termination_reason,
-            session_summary=summary,
-            model=model,
-        )
-        logger.info(
-            "세션 종료 — 사유: %s | 총점: %d | 커버리지: %.1f%%",
-            termination_reason, total, coverage.get("coverage_percent", 0),
-        )
-        session_record_id = _save_session_record(
-            db=db,
-            document_id=document_id,
-            topic=topic,
-            total_score=total,
-            scores=score_dict,
-            turn_count=turn_count,
-            termination_reason=termination_reason,
-            coverage_percent=coverage.get("coverage_percent", 0.0),
-            misconceptions=[m.get("description", str(m)) for m in eval_result.misconceptions],
-            session_summary=summary,
-            user_kg_before=initial_user_kg,
-            user_kg_after=_build_user_kg_view(db, document_id, user_kg, include_sources=True),
-        )
-        return TurnResult(
-            scores=score_dict,
-            total=total,
-            misconceptions=eval_result.misconceptions,
-            is_session_done=True,
-            termination_reason=termination_reason,
-            session_summary=summary,
-            closing_message=closing,
-            coverage=coverage,
-            missing_nodes=missing_nodes,
-            session_record_id=session_record_id,
-        )
-
     if turn_count >= MAX_TURNS:
         termination_reason = "turn_limit"
         updated_history = session_history + [score_dict]
@@ -336,7 +289,7 @@ def process_turn(
         )
 
     # ── 7. 다음 질문 생성 ──
-    student_context = get_student_context(user_kg)
+    student_context = get_student_context(user_kg, reference_kg)
 
     next_student: StudentResponse = generate_student_question(
         topic=topic,
