@@ -19,6 +19,9 @@ Python is pinned in `backend/.python-version`:
 3.12.7
 ```
 
+`backend/mise.toml` disables Python artifact attestation verification for
+Railway's mise-based builder.
+
 Start command:
 
 ```bash
