@@ -13,6 +13,15 @@ Create one Railway project with these services:
 
 Set the service root directory to `backend`.
 
+Python is pinned in `backend/.python-version`:
+
+```txt
+3.12.7
+```
+
+`backend/mise.toml` disables Python artifact attestation verification for
+Railway's mise-based builder.
+
 Start command:
 
 ```bash
@@ -41,11 +50,20 @@ Set the service root directory to `frontend`.
 Use Railway's static site or React static hosting flow. If Railway asks for a
 publish/output directory, set it to `dist`.
 
+Public networking:
+
+```txt
+Target Port: 8080
+```
+
 Build command:
 
 ```bash
-npm ci && npm run build
+npm run build
 ```
+
+Leave the install command empty/default. Railway runs `npm ci` automatically
+before the build step.
 
 Environment variables:
 

@@ -20,6 +20,12 @@ backend/uploads/*
 .vscode/
 .idea/
 
+# Local agent notes
+AGENTS.md
+CLAUDE.md
+backend/.claude/
+docs/
+
 # Node
 node_modules/
 dist/
