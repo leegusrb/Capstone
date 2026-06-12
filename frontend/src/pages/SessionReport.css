@@ -44,7 +44,14 @@
 }
 .cmp-badge.before { background: #f1f5f9; color: #64748b; }
 .cmp-badge.after  { background: #ecfdf5; color: #059669; }
-.kg-bg { background: #f8faff; border-radius: 10px; padding: 12px; overflow: hidden; }
+.kg-compare-row .kg-bg {
+  min-width: 0;
+  max-width: 100%;
+  background: #f8faff;
+  border-radius: 10px;
+  padding: 12px;
+  overflow: hidden;
+}
 .cmp-arrow { font-size: 24px; color: #cbd5e1; flex-shrink: 0; }
 .kg-legend { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 10px; }
 .kl { font-size: 11px; font-weight: 600; }
