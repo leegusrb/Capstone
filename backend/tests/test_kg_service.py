@@ -31,9 +31,11 @@ def make_reference_kg() -> nx.DiGraph:
     g = nx.DiGraph()
     nodes = ["TCP", "연결 지향", "3-way handshake", "흐름 제어", "혼잡 제어", "ACK"]
     for n in nodes:
+        importance = "high" if n == "TCP" else "medium"
         g.add_node(
             n,
             status="reference",
+            importance=importance,
             checklist=[
                 {"item": f"{n} 설명", "source_quote": f"{n}는 학습 자료의 핵심 개념이다."}
             ],
@@ -79,6 +81,8 @@ def test_sync_user_kg():
 
     missing = get_missing_nodes(user_kg)
     assert set(missing) == {"TCP", "연결 지향", "3-way handshake", "흐름 제어", "혼잡 제어", "ACK"}
+    assert user_kg.nodes["TCP"]["importance"] == "high"
+    assert user_kg.nodes["ACK"]["importance"] == "medium"
 
     print("✅ test_sync_user_kg 통과 — missing 노드:", missing)
 

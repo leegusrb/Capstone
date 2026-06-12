@@ -15,6 +15,7 @@ def _sample_kg():
             {
                 "id": "TCP",
                 "status": "partial",
+                "importance": "high",
                 "checklist": [
                     {
                         "item": "Explain that TCP is connection-oriented",
@@ -58,6 +59,7 @@ def test_user_view_includes_stored_source_page_when_enabled():
     assert checklist[1]["page_number"] is None
     assert view["nodes"][0]["met_count"] == 1
     assert view["nodes"][0]["total_count"] == 2
+    assert view["nodes"][0]["importance"] == "high"
 
 
 def test_user_view_falls_back_to_chunk_match_for_legacy_items():
@@ -82,6 +84,19 @@ def test_default_user_and_reference_views_hide_source_quote():
     assert "source_quote" not in user_view["nodes"][0]["checklist"][0]
     assert "page_number" not in user_view["nodes"][0]["checklist"][0]
     assert "checklist" not in ref_view["nodes"][0]
+    assert user_view["nodes"][0]["importance"] == "high"
+    assert ref_view["nodes"][0]["importance"] == "high"
+
+
+def test_views_default_invalid_importance_to_medium():
+    kg = _sample_kg()
+    kg["nodes"][0]["importance"] = "invalid"
+
+    user_view = strip_checklist_for_user_view(kg)
+    ref_view = strip_checklist_for_reference_view(kg)
+
+    assert user_view["nodes"][0]["importance"] == "medium"
+    assert ref_view["nodes"][0]["importance"] == "medium"
 
 
 def test_user_view_downgrades_confirmed_when_no_checklist_items_are_met():
@@ -100,5 +115,6 @@ if __name__ == "__main__":
     test_user_view_includes_stored_source_page_when_enabled()
     test_user_view_falls_back_to_chunk_match_for_legacy_items()
     test_default_user_and_reference_views_hide_source_quote()
+    test_views_default_invalid_importance_to_medium()
     test_user_view_downgrades_confirmed_when_no_checklist_items_are_met()
     print("ok")

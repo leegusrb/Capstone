@@ -31,15 +31,37 @@ function splitLabel(label) {
   return lines;
 }
 
-function NodeLabel({ label, r, fill, fontWeight }) {
+function estimateHighlightWidth(line) {
+  return Math.min(174, Math.max(42, [...line].length * 14 + 20));
+}
+
+function NodeLabel({ label, r, fill, fontWeight, highlight }) {
   const lines = splitLabel(label);
   return (
-    <text textAnchor="middle" fill={fill} fontSize={22}
-      fontFamily="Inter,sans-serif" fontWeight={fontWeight}>
-      {lines.map((line, i) => (
-        <tspan key={i} x={0} y={r + 33 + i * 24}>{line}</tspan>
-      ))}
-    </text>
+    <g>
+      {highlight && lines.map((line, i) => {
+        const y = r + 33 + i * 24;
+        const w = estimateHighlightWidth(line);
+        return (
+          <rect
+            key={`hl-${i}`}
+            x={-w / 2}
+            y={y - 18}
+            width={w}
+            height={24}
+            rx={5}
+            fill="#fde68a"
+            opacity={0.72}
+          />
+        );
+      })}
+      <text textAnchor="middle" fill={fill} fontSize={22}
+        fontFamily="Inter,sans-serif" fontWeight={fontWeight}>
+        {lines.map((line, i) => (
+          <tspan key={i} x={0} y={r + 33 + i * 24}>{line}</tspan>
+        ))}
+      </text>
+    </g>
   );
 }
 
@@ -47,6 +69,7 @@ const STATUS_COLOR = {
   confirmed: '#10b981',
   partial: '#f59e0b',
   missing: '#cbd5e1',
+  reference: '#cbd5e1',
   active: '#4f6ef7',
   misconception: '#ef4444',
 };
@@ -54,12 +77,12 @@ const STATUS_STROKE = {
   confirmed: '#059669',
   partial: '#d97706',
   missing: '#94a3b8',
+  reference: '#94a3b8',
   active: '#3451d1',
   misconception: '#dc2626',
 };
-
 // 레이블이 노드 중심에서 벗어나는 여백
-const LBL_X   = 86;  // 좌우 (레이블 최대 폭의 절반)
+const LBL_X   = 104; // 좌우 (형광펜 라벨 폭 포함)
 const LBL_TOP = 34;  // 위
 const LBL_BOT = 100;  // 아래 (최대 3줄 레이블 + 여유)
 
@@ -72,6 +95,11 @@ function clampZoom(value) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
 }
 
+function isHighImportance(importance) {
+  const normalized = String(importance || '').trim().toLowerCase();
+  return normalized === 'high';
+}
+
 export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340, onNodeClick, selectedNodeId }) {
   const [hovered, setHovered] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -79,7 +107,8 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    setZoom(1);
+    const frame = requestAnimationFrame(() => setZoom(1));
+    return () => cancelAnimationFrame(frame);
   }, [nodes, edges]);
 
   useEffect(() => {
@@ -174,7 +203,7 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
             <marker id="arr-active" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
               <path d="M0,0 L0,6 L6,3 z" fill="#4f6ef7"/>
             </marker>
-            {nodes.filter(n => n.status !== 'missing').map(n => (
+            {nodes.filter(n => n.status !== 'missing' && n.status !== 'reference').map(n => (
               <filter key={n.id} id={`g${n.id}`} x="-50%" y="-50%" width="200%" height="200%">
                 <feGaussianBlur stdDeviation="3" result="blur"/>
                 <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -202,6 +231,7 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
             const stroke = STATUS_STROKE[n.status] || STATUS_STROKE.missing;
             const isHov = hovered === n.id;
             const isSel = selectedNodeId === n.id;
+            const isProgressNode = n.status !== 'missing' && n.status !== 'reference';
             const r = 26;
             return (
               <g key={n.id} transform={`translate(${n.x},${n.y})`}
@@ -214,17 +244,18 @@ export default function KnowledgeGraph({ nodes, edges, width = 500, height = 340
                     stroke="#4f6ef7" strokeWidth={2} strokeDasharray="4 3" opacity={0.8}
                     style={{ transition: 'all 0.2s ease' }}/>
                 )}
-                {n.status !== 'missing' && (
+                {isProgressNode && (
                   <circle r={r + 7} fill={color} opacity={isHov ? 0.18 : 0.1}
                     style={{ transition: 'opacity 0.2s' }}/>
                 )}
                 <circle r={r} fill={color} stroke={stroke} strokeWidth={isHov || isSel ? 2.5 : 1.5}
-                  filter={n.status !== 'missing' ? `url(#g${n.id})` : ''}
+                  filter={isProgressNode ? `url(#g${n.id})` : ''}
                   style={{ transition: 'all 0.3s ease' }}
                 />
                 <NodeLabel label={n.label} r={r}
                   fill={n.status === 'missing' ? '#94a3b8' : '#0f172a'}
                   fontWeight={isHov || isSel ? 700 : 500}
+                  highlight={isHighImportance(n.importance)}
                 />
               </g>
             );

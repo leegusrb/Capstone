@@ -79,6 +79,18 @@ class RelationType(str, Enum):
     IS_EXAMPLE_OF = "예시이다"  # A가 B의 구체적 예시         (슬라이딩 윈도우 → 흐름 제어 메커니즘)
 
 
+_ALLOWED_NODE_IMPORTANCE = {"high", "medium", "low"}
+DEFAULT_NODE_IMPORTANCE = "medium"
+
+
+def normalize_node_importance(value: Any) -> str:
+    """노드 중요도를 허용값으로 정규화한다. 기존/잘못된 값은 medium으로 처리."""
+    normalized = str(value or "").strip().lower()
+    if normalized in _ALLOWED_NODE_IMPORTANCE:
+        return normalized
+    return DEFAULT_NODE_IMPORTANCE
+
+
 # 프롬프트 삽입용 — 각 타입의 의미 설명 포함
 _RELATION_TYPE_GUIDE = """\
 사용 가능한 relation 목록 (반드시 이 중 하나만 사용할 것):
@@ -211,6 +223,7 @@ def init_user_kg(reference_kg: nx.DiGraph) -> nx.DiGraph:
             checklist=attrs.get("checklist", []),
             checklist_result=[],
             completion_ratio=0.0,
+            importance=normalize_node_importance(attrs.get("importance")),
             evaluation_exempt=bool(attrs.get("evaluation_exempt", False)),
         )
 
@@ -577,6 +590,7 @@ def get_user_kg_view_for_session_summary(user_kg: nx.DiGraph) -> list[dict]:
             "met_count":        sum(1 for ck in merged if ck["met"]),
             "total_count":      len(merged),
             "completion_ratio": sum(1 for ck in merged if ck["met"]) / len(merged) if merged else 0.0,
+            "importance":       normalize_node_importance(attrs.get("importance")),
         })
     return view
 
@@ -586,11 +600,16 @@ def strip_checklist_for_reference_view(kg_dict: dict) -> dict:
     Reference KG dict에서 모든 체크리스트 정보를 제거한다.
     정답 기준이 노출되면 학습 효과가 훼손되므로 GET /reference 응답 직전에 사용.
     """
-    safe_nodes = [
-        {k: v for k, v in node.items() if k not in {"checklist", "checklist_result"}}
-        for node in kg_dict.get("nodes", [])
-        if not str(node.get("id", "")).startswith("__")
-    ]
+    safe_nodes = []
+    for node in kg_dict.get("nodes", []):
+        if str(node.get("id", "")).startswith("__"):
+            continue
+        safe = {
+            k: v for k, v in node.items()
+            if k not in {"checklist", "checklist_result"}
+        }
+        safe["importance"] = normalize_node_importance(node.get("importance"))
+        safe_nodes.append(safe)
     return {"nodes": safe_nodes, "edges": kg_dict.get("edges", [])}
 
 
@@ -649,6 +668,7 @@ def strip_checklist_for_user_view(
             k: v for k, v in node.items()
             if k not in {"checklist", "checklist_result"}
         }
+        safe["importance"] = normalize_node_importance(node.get("importance"))
         met_count = sum(1 for ck in merged if ck["met"])
         safe["checklist"]   = merged
         safe["met_count"]   = met_count

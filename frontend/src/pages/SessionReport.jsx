@@ -150,6 +150,7 @@ export default function SessionReport() {
           x: positioned.x ?? Math.round(laid.width / 2),
           y: positioned.y ?? Math.round(laid.height / 2),
           status: node.status || 'missing',
+          importance: node.importance || positioned.importance || 'medium',
           checklist: node.checklist || [],
         };
       };
@@ -296,6 +297,7 @@ export default function SessionReport() {
                 <span className="kl yellow">● Partial</span>
                 <span className="kl red">● Misconception</span>
                 <span className="kl gray">● Missing</span>
+                <span className="kl importance">형광펜 = 핵심 개념</span>
               </div>
               <p className="kg-click-hint">💡 노드를 클릭하면 체크리스트를 확인할 수 있습니다</p>
             </div>
@@ -371,7 +373,7 @@ export default function SessionReport() {
       {/* 3. 오개념 */}
       {misconceptions.length > 0 && (
         <section>
-          <h2 className="section-title">발견된 오개념</h2>
+          <h2 className="section-title">세션 중 발견된 오개념 이력</h2>
           <div className="card misconceptions-list-card">
             {misconceptions.map((m, i) => (
               <div key={i} className="mc-list-item">

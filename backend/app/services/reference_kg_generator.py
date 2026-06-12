@@ -50,7 +50,7 @@ import networkx as nx
 from openai import OpenAI
 
 from app.config import settings
-from app.services.kg_service import RelationType
+from app.services.kg_service import RelationType, normalize_node_importance
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +256,18 @@ _REFERENCE_KG_EXTRACTION_PROMPT = """\
   주의: 묶음 노드는 체크리스트 항목 수가 1개여도 허용됩니다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[2.5] 노드 중요도(importance) 부여 규칙
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+각 노드에는 반드시 importance를 포함하세요.
+
+- "high": 자료의 핵심 주제, 상위 개념, 여러 하위 개념을 묶는 중심 개념
+- "medium": 독립적으로 설명되는 주요 하위 개념
+- "low": 보조적이거나 세부적인 개념
+
+importance는 반드시 "high", "medium", "low" 중 하나만 사용하세요.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [3] 엣지 추출 규칙
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -299,6 +311,7 @@ _REFERENCE_KG_EXTRACTION_PROMPT = """\
   "nodes": [
     {
       "id": "TCP",
+      "importance": "high",
       "checklist": [
         {
           "item": "연결 지향 방식임을 명시",
@@ -389,6 +402,7 @@ class NodeWithChecklist:
     """체크리스트가 부여된 KG 노드."""
     id: str
     checklist: list[ChecklistItem] = field(default_factory=list)
+    importance: str = "medium"
 
 
 @dataclass
@@ -580,7 +594,11 @@ def _parse_to_dataclass(
                 page_number=_parse_page_number(item.get("page_number")),
             ))
 
-        parsed_node = NodeWithChecklist(id=node_id, checklist=checklist)
+        parsed_node = NodeWithChecklist(
+            id=node_id,
+            checklist=checklist,
+            importance=normalize_node_importance(node.get("importance")),
+        )
         existing = best_node_by_id.get(node_id)
         if existing is None or len(parsed_node.checklist) > len(existing.checklist):
             best_node_by_id[node_id] = parsed_node
@@ -856,6 +874,7 @@ def _merge_runs_by_consensus(
         final_nodes.append(NodeWithChecklist(
             id=display_id,
             checklist=node.checklist,
+            importance=normalize_node_importance(node.importance),
         ))
 
     accepted_norm_ids = {
@@ -1174,6 +1193,7 @@ def _filter_meta_checklist_items(
         cleaned_nodes.append(NodeWithChecklist(
             id=node.id,
             checklist=kept_items,
+            importance=normalize_node_importance(node.importance),
         ))
 
     if total_removed > 0 or total_canceled > 0:
@@ -1670,6 +1690,9 @@ def _canonicalize_graph_order(graph: nx.DiGraph) -> nx.DiGraph:
         key=lambda item: _normalize_node_id(item[0]),
     ):
         attrs_copy = dict(attrs)
+        attrs_copy["importance"] = normalize_node_importance(
+            attrs_copy.get("importance")
+        )
         checklist = attrs_copy.get("checklist")
         if isinstance(checklist, list):
             attrs_copy["checklist"] = sorted(
@@ -1737,6 +1760,7 @@ def generate_reference_kg(
 
             graph.nodes["TCP"] == {
                 "status": "reference",
+                "importance": "high",
                 "checklist": [
                     {"item": "...", "source_quote": "...", "page_number": 3},
                     ...
@@ -1846,6 +1870,7 @@ def generate_reference_kg(
         graph.add_node(
             node.id,
             status="reference",
+            importance=normalize_node_importance(node.importance),
             checklist=[
                 {
                     "item": ck.item,

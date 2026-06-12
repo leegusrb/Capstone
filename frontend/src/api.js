@@ -110,6 +110,11 @@ function getAudioExtension(mimeType = '') {
 }
 
 // API KG 노드/엣지 → KnowledgeGraph 컴포넌트 형식 변환 (centered subtree 트리 레이아웃)
+function normalizeImportance(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['high', 'medium', 'low'].includes(normalized) ? normalized : 'medium';
+}
+
 export function layoutKGNodes(nodes, edges, width, height) {
   if (!nodes || nodes.length === 0) return [];
 
@@ -224,6 +229,7 @@ export function layoutKGNodes(nodes, edges, width, height) {
     x: pos[n.id]?.x ?? Math.round(effW / 2),
     y: pos[n.id]?.y ?? Math.round(effH / 2),
     status: n.status || 'missing',
+    importance: normalizeImportance(n.importance),
     checklist: n.checklist || [],
   }));
 

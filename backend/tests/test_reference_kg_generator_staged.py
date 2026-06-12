@@ -101,6 +101,36 @@ def test_detail_parser_preserves_checklist_page_number():
     assert parsed.nodes[0].checklist[0].page_number == 2
 
 
+def test_detail_parser_normalizes_node_importance():
+    data = {
+        "nodes": [
+            {
+                "id": "A",
+                "importance": "high",
+                "checklist": [{"item": "A를 명시", "source_quote": "A는 핵심이다."}],
+            },
+            {
+                "id": "B",
+                "importance": "not-valid",
+                "checklist": [{"item": "B를 명시", "source_quote": "B는 하위 개념이다."}],
+            },
+            {
+                "id": "C",
+                "checklist": [{"item": "C를 명시", "source_quote": "C는 보조 개념이다."}],
+            },
+        ],
+        "edges": [],
+    }
+
+    parsed = kg._parse_to_dataclass(data)
+
+    assert {node.id: node.importance for node in parsed.nodes} == {
+        "A": "high",
+        "B": "medium",
+        "C": "medium",
+    }
+
+
 def test_chunks_are_formatted_with_page_markers():
     chunks = [
         {"content": "A는 핵심이다.", "page_number": 2},
