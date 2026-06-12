@@ -66,7 +66,7 @@ const LBL_BOT = 100;  // 아래 (최대 3줄 레이블 + 여유)
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.2;
 const ZOOM_STEP = 0.2;
-const FIT_MAX_HEIGHT = 320;
+const FIT_MAX_HEIGHT = 160;
 
 function clampZoom(value) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
